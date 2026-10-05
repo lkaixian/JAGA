@@ -30,11 +30,12 @@ Sentinels, the single contract everyone parses:
 
 Two kinds of state, derived the same way in the dashboard and the app. If they disagree, one has a bug.
 
-**Link state** (where the break is), highest priority first:
+**Link state** (where the break is), highest priority first (server, then site, then master):
 
 | State | Test | Banner text |
 |---|---|---|
 | Server unreachable | request to the server fails or times out (5 s) | "Can't reach the server. Showing data from 14:32." |
+| Site offline (hub only) | hub answers, `site_ok` is false (no heartbeat for 90 s) | "This site is offline. Showing data from 14:32." |
 | Master unreachable | server answers, `master_ok` is false (3 failed polls, about 30 s) | "The server can't reach the master node. Readings stopped at 14:32." |
 | Connected | neither of the above | none |
 

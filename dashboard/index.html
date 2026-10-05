@@ -68,6 +68,9 @@ section{padding:36px 0 8px}
 .card .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:6px}
 .chip{font:500 13px var(--font-mono);padding:2px 10px;border-radius:999px;border:1px solid currentColor;min-width:64px;text-align:center}
 .chip.pending{color:var(--mist)}
+.card.off{opacity:.75}
+.card.off .meta,.card.off .seen{color:var(--paper)}
+.card .seen{font:13px var(--font-mono);color:var(--mist)}
 .err{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
 .err button{margin-left:8px;font:inherit;font-weight:600;padding:8px 14px;border-radius:6px;border:2px solid var(--signal);background:transparent;color:var(--signal);cursor:pointer}
 #apk{min-height:60px}
@@ -262,11 +265,20 @@ footer a{color:var(--signal)}
     chip.setAttribute('role', 'status');
     row.appendChild(chip);
     var a = document.createElement('a'); a.textContent = 'Open dashboard';
-    var href = url.replace(/\/+$/, '') + '/dashboard';
+    var href = url.replace(/\/+$/, '');
+    if (url.indexOf('/server/') < 0) href += '/dashboard';
     a.href = href;
     try { if (new URL(href, location.href).origin !== location.origin) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } } catch (e) { /* keep same tab */ }
     row.appendChild(a);
     el.appendChild(row);
+    if (s.online === false) {
+      el.classList.add('off');
+      chip.textContent = 'offline'; chip.className = 'chip bad';
+      var seen = document.createElement('span'); seen.className = 'seen';
+      seen.textContent = s.last_seen_s == null ? 'Never reported' : 'Last seen ' + hhmm(Date.now() - s.last_seen_s * 1000);
+      row.insertBefore(seen, a);
+      return el;
+    }
     ping(url).then(function (ms) {
       if (ms == null) { chip.textContent = 'offline'; chip.className = 'chip bad'; }
       else { chip.textContent = ms + ' ms'; chip.className = 'chip ' + (ms < 100 ? 'ok' : ms < 300 ? 'warn' : 'bad'); }

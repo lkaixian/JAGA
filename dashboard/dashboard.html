@@ -61,6 +61,8 @@ body{
   letter-spacing:.22em;text-transform:uppercase;color:var(--mist);
 }
 .topbar .spacer{flex:1}
+.site{font-family:var(--font-mono);font-size:13px;color:var(--mist);max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:600px){.site{max-width:14ch}}
 .clock{font-family:var(--font-mono);font-size:13px;color:var(--mist);letter-spacing:.04em}
 .homelink{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mist);text-decoration:none;border:1px solid var(--rule);border-radius:999px;padding:5px 11px}
 .homelink:hover,.homelink:focus-visible{color:var(--paper);border-color:var(--signal)}
@@ -194,6 +196,7 @@ tr.stale{opacity:.5}
       <b>J.A.G.A</b>
       <span>Jaringan Amaran Geo-Spatial & AI &middot; Monitoring System</span>
     </div>
+    <span class="site" id="siteName"></span>
     <div class="spacer"></div>
     <a class="homelink" href="/">Home</a>
     <div class="clock" id="clock">--:--:--</div>
@@ -725,13 +728,14 @@ function drawBanner(){
   $('bannerMsg').innerHTML = msg;
 }
 
-let link = 'ok', lastOk = null;       // link: ok | server | master;  lastOk: ms of last good poll
+let link = 'ok', lastOk = null;       // link: ok | server | site | master;  lastOk: ms of last good poll
 const hhmm = ms => new Date(ms).toTimeString().slice(0,5);
 
 function drawLink(){
   const b = $('linkBanner');
   let msg = '';
   if(link === 'server') msg = "Can't reach the server." + (lastOk ? ` Showing data from ${hhmm(lastOk)}.` : '');
+  else if(link === 'site') msg = `This site is offline. Showing data from ${hhmm(lastOk - (apiStatus.site_age_s||0)*1000)}.`;
   else if(link === 'master') msg = "The server can't reach the master node."
     + (apiStatus.master_age_s != null ? ` Readings stopped at ${hhmm(lastOk - apiStatus.master_age_s*1000)}.` : '');
   b.className = 'banner link' + (msg ? ' on' : '');
@@ -813,11 +817,11 @@ async function tick(){
     try {
       await fetchApi();
       lastOk = Date.now(); fails = 0;
-      link = apiStatus?.master_ok === false ? 'master' : 'ok';          // absent master_ok = talking to the master itself
+      link = apiStatus?.site_ok === false ? 'site' : apiStatus?.master_ok === false ? 'master' : 'ok';          // absent master_ok = talking to the master itself
     } catch(e){
       fails++; link = 'server';                                      // keep what we have on screen
     }
-    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
+    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'site' ? 'Site offline — showing last data' : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
   } else {
     try {
       const rows = await SOURCE.fetchLatest();
@@ -837,6 +841,7 @@ async function tick(){
   render();
 }
 
+if(SOURCE.mode === 'api') getJSON('/api/site').then(x => { if(x?.name) $('siteName').textContent = x.name; }).catch(() => {});
 // warm-up so the chart isn't empty on first paint (simulator only)
 if(SOURCE.mode === 'simulate') for(let i=0;i<40;i++) simStep();
 $('srcCode').textContent = SOURCE.mode;

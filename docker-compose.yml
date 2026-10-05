@@ -7,6 +7,10 @@ services:
       MASTER_URL: ${MASTER_URL:-http://192.168.1.50}
       SITE_NAME: ${SITE_NAME:-UTHM Parit Raja}
       SITE_LOGO: ${SITE_LOGO:-/uthm.png}
+      # Set all three to push this site's data to a hub; leave empty to run standalone.
+      HUB_URL: ${HUB_URL:-}
+      SITE_SLUG: ${SITE_SLUG:-}
+      SITE_TOKEN: ${SITE_TOKEN:-}
     volumes:
       - ./data:/data
     healthcheck:
