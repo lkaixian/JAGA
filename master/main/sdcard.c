@@ -43,6 +43,11 @@ esp_err_t sdcard_init(spi_host_device_t host, gpio_num_t cs_pin) {
     return ESP_OK;
 }
 
+void sdcard_deinit(void) {
+    if (s_card) esp_vfs_fat_sdcard_unmount("/sdcard", s_card);
+    s_card = NULL;
+}
+
 esp_err_t sdcard_append_line(const char *path, const char *header, const char *line) {
     if (!s_card) {
         return ESP_ERR_INVALID_STATE;

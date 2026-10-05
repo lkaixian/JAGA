@@ -108,6 +108,11 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
              (long)p->water_level_mm);
     if (sdcard_append_line(TELEMETRY_CSV_PATH, TELEMETRY_CSV_HEADER, line) != ESP_OK) {
         ESP_LOGW(TAG, "Failed to log node %u's reading to SD card.", p->node_id);
+        if (sd_available) {
+            sdcard_deinit();
+            sd_available = false;
+            ESP_LOGW(TAG, "SD card removed or failing. Logging paused.");
+        }
     }
 
     if (p->node_id >= 1 && p->node_id <= 3) {
@@ -266,7 +271,7 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Master node ready (node_id=%u), listening + logging forever.", NODE_ID);
 
-    while (1) {
+    for (unsigned cycle = 1;; ) {
         int64_t cycle_start = esp_timer_get_time();
         esp_task_wdt_reset();
         api_set_health(rtc_available, sd_available, radio_ok);
@@ -354,6 +359,19 @@ void app_main(void) {
         // nRF24 buffers up to 3 payloads in hardware on its own as long as
         // CE stays high, no CPU involvement needed until we poll it here.
         int received = radio_ok ? drain_radio(&radio) : 0;
+
+        // Remount only right after a drain, so the shared SPI2 bus is idle and
+        // the FIFO is empty; ~10 min between tries as the card init takes seconds.
+        if (!sd_available && cycle % 10 == 0) {
+            gpio_reset_pin(SD_CS_PIN);
+            gpio_set_direction(SD_CS_PIN, GPIO_MODE_OUTPUT);
+            gpio_set_level(SD_CS_PIN, 1);
+            if (sdcard_init(SPI2_HOST, SD_CS_PIN) == ESP_OK) {
+                sd_available = true;
+                ESP_LOGI(TAG, "SD card is back. Logging resumed.");
+            }
+        }
+        cycle++;
 
         update_oled(received);
 

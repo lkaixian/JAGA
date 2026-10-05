@@ -17,6 +17,9 @@ extern "C" {
  */
 esp_err_t sdcard_init(spi_host_device_t host, gpio_num_t cs_pin);
 
+/** @brief Unmount the card (e.g. after a write failure) so sdcard_init can retry. */
+void sdcard_deinit(void);
+
 /**
  * @brief Append one line to a file under /sdcard, adding a trailing newline.
  *        Creates the file (and writes `header` first) if it doesn't exist yet.

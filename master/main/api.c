@@ -47,20 +47,31 @@ static SemaphoreHandle_t s_history_lock;
 
 static bool s_rtc_ok, s_sd_ok, s_radio_ok;
 
+static esp_timer_handle_t s_wifi_timer, s_httpd_timer;
+static int s_wifi_retry_s = 1; // next reconnect delay; 1, 2, 4, 8, 16, 30 s
+static esp_err_t start_httpd(void);
+
+static void wifi_retry_cb(void *arg) { esp_wifi_connect(); }
+static void httpd_retry_cb(void *arg) { start_httpd(); }
+
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        // ponytail: retries immediately with no backoff - fine for a stable
-        // AP; add exponential backoff if this network drops often.
-        esp_wifi_connect();
+        // ponytail: doubling delay capped at 30 s via a one-shot timer, so the
+        // event loop never blocks; no jitter, fine for a single station.
+        esp_timer_start_once(s_wifi_timer, (uint64_t)s_wifi_retry_s * 1000000);
+        s_wifi_retry_s = s_wifi_retry_s >= 16 ? 30 : s_wifi_retry_s * 2;
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+        s_wifi_retry_s = 1;
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
     }
 }
 
 static esp_err_t wifi_connect(void) {
+    const esp_timer_create_args_t wt = { .callback = wifi_retry_cb, .name = "wifi_retry" };
+    ESP_ERROR_CHECK(esp_timer_create(&wt, &s_wifi_timer));
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_sta();
@@ -87,11 +98,28 @@ static void set_cors(httpd_req_t *req) {
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
 }
 
+static void send_error(httpd_req_t *req, const char *status, const char *body) {
+    set_cors(req);
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, body);
+}
+
+static void send_oom(httpd_req_t *req) {
+    send_error(req, "500 Internal Server Error",
+               "{\"error\":{\"code\":\"internal\",\"message\":\"The master ran out of memory.\"}}");
+}
+
 static void send_json(httpd_req_t *req, cJSON *root) {
-    char *out = cJSON_PrintUnformatted(root);
+    char *out = root ? cJSON_PrintUnformatted(root) : NULL;
+    if (!out) {
+        send_oom(req);
+        cJSON_Delete(root);
+        return;
+    }
     set_cors(req);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, out ? out : "null");
+    httpd_resp_sendstr(req, out);
     free(out);
     cJSON_Delete(root);
 }
@@ -155,9 +183,8 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
         if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK) limit = atoi(val);
     }
     if (node_id < 1 || node_id > 3) {
-        set_cors(req);
-        httpd_resp_set_status(req, "400 Bad Request");
-        httpd_resp_sendstr(req, "{\"error\":\"node must be 1, 2 or 3\"}");
+        send_error(req, "400 Bad Request",
+                   "{\"error\":{\"code\":\"bad_request\",\"message\":\"node must be 1, 2 or 3\"}}");
         return ESP_OK;
     }
     if (limit <= 0 || limit > HISTORY_LEN) limit = HISTORY_LEN;
@@ -192,6 +219,28 @@ void api_record_reading(const api_reading_t *r) {
     xSemaphoreGive(s_history_lock);
 }
 
+static esp_err_t start_httpd(void) {
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    httpd_handle_t server = NULL;
+    if (httpd_start(&server, &config) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server. Retrying in 30 s.");
+        esp_timer_start_once(s_httpd_timer, 30 * 1000000ULL);
+        return ESP_FAIL;
+    }
+
+    static const httpd_uri_t status_uri  = { .uri = "/api/status",  .method = HTTP_GET, .handler = status_get_handler };
+    static const httpd_uri_t nodes_uri   = { .uri = "/api/nodes",   .method = HTTP_GET, .handler = nodes_get_handler };
+    static const httpd_uri_t latest_uri  = { .uri = "/api/latest",  .method = HTTP_GET, .handler = latest_get_handler };
+    static const httpd_uri_t history_uri = { .uri = "/api/history", .method = HTTP_GET, .handler = history_get_handler };
+    httpd_register_uri_handler(server, &status_uri);
+    httpd_register_uri_handler(server, &nodes_uri);
+    httpd_register_uri_handler(server, &latest_uri);
+    httpd_register_uri_handler(server, &history_uri);
+
+    ESP_LOGI(TAG, "API up: GET /api/status, /api/nodes, /api/latest, /api/history?node=<1-3>&limit=<n>");
+    return ESP_OK;
+}
+
 esp_err_t api_start(void) {
     s_history_lock = xSemaphoreCreateMutex();
 
@@ -214,22 +263,7 @@ esp_err_t api_start(void) {
         ESP_LOGW(TAG, "mDNS init failed - use the IP address logged above instead.");
     }
 
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-    if (httpd_start(&server, &config) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server.");
-        return ESP_FAIL;
-    }
-
-    static const httpd_uri_t status_uri  = { .uri = "/api/status",  .method = HTTP_GET, .handler = status_get_handler };
-    static const httpd_uri_t nodes_uri   = { .uri = "/api/nodes",   .method = HTTP_GET, .handler = nodes_get_handler };
-    static const httpd_uri_t latest_uri  = { .uri = "/api/latest",  .method = HTTP_GET, .handler = latest_get_handler };
-    static const httpd_uri_t history_uri = { .uri = "/api/history", .method = HTTP_GET, .handler = history_get_handler };
-    httpd_register_uri_handler(server, &status_uri);
-    httpd_register_uri_handler(server, &nodes_uri);
-    httpd_register_uri_handler(server, &latest_uri);
-    httpd_register_uri_handler(server, &history_uri);
-
-    ESP_LOGI(TAG, "API up: GET /api/status, /api/nodes, /api/latest, /api/history?node=<1-3>&limit=<n>");
-    return ESP_OK;
+    const esp_timer_create_args_t ht = { .callback = httpd_retry_cb, .name = "httpd_retry" };
+    ESP_ERROR_CHECK(esp_timer_create(&ht, &s_httpd_timer));
+    return start_httpd();
 }
