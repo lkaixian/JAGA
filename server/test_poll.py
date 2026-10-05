@@ -45,7 +45,7 @@ def poll(**kw):
 
 assert c.get("/api/status").status_code == 503
 assert c.get("/api/status").json()["error"]["code"] == "master_unreachable"
-assert c.get("/api/health").json() == {"ok": True, "rejected": 0}
+assert c.get("/api/health").json() == {"ok": True, "rejected": 0, "hub": None}
 
 poll(n=1)  # (a)
 s = c.get("/api/status").json()

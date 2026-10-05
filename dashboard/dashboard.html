@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
 <!-- This site is hosted on Netlify. Anyone can build and deploy a site
      like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=c926b064-579b-4199-bb22-9365d4eaa640
      Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
@@ -13,7 +13,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="river.js"></script>
+<script src="/river.js"></script>
 <style>
 :root{
   --abyss:#061726;
@@ -388,7 +388,10 @@ const NODES = [
       'supabase' reads real rows once your ESP32 is posting.
    ========================================================================= */
 // 'api' = our nginx/Python server (or the master directly); add ?sim to the URL for the simulator.
-const API = /^https?:/.test(location.protocol) ? location.origin : 'http://jaga-master.local';
+// Served at /server/<slug> by the hub, the API lives under that same prefix; otherwise at the site root.
+const API = /^https?:/.test(location.protocol)
+  ? location.origin + (location.pathname.match(/^\/server\/[a-z0-9-]+/) || [''])[0]
+  : 'http://jaga-master.local';
 const SONAR_ERR = -2147483648;                       // INT32_MIN from the firmware
 const nodeNum = id => +id.slice(-2);                 // 'JAGA-03' -> 3
 const SOURCE = {

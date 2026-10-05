@@ -6,6 +6,8 @@ import sqlite3
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager, closing
 
@@ -30,6 +32,17 @@ health = {"master_ok": False, "last_ok": 0.0, "fails": 0, "db_ok": True}
 rejected = 0  # master rows dropped as malformed since start
 last_prune = 0.0
 last_err = None  # last poll_once crash text, so a repeating error prints once
+
+# Hub push client: off unless all three are set. Outbound only, the hub never connects in.
+HUB_URL = os.environ.get("HUB_URL", "").rstrip("/")
+SITE_SLUG = os.environ.get("SITE_SLUG", "")
+SITE_TOKEN = os.environ.get("SITE_TOKEN", "")
+PUSH_OK_S = 30
+PUSH_BACKOFF_S = (30, 60, 120)
+PUSH_TIMEOUT_S = 10
+BATCH = 500
+MAX_BATCHES = 20  # per iteration, so a huge first backfill can't hold up heartbeats
+push = {"fails": 0, "err": None, "last_ok": None, "pending": 0, "latest": None, "cursor": None}
 
 
 def db():
@@ -168,6 +181,77 @@ def poll_loop():
         time.sleep(min(30, POLL_S * max(1, health["fails"])))  # back off 10, 20, 30 s while polls fail
 
 
+def hub_on():
+    return bool(HUB_URL and SITE_SLUG and SITE_TOKEN)
+
+
+def hub_post(path, body):
+    req = urllib.request.Request(
+        f"{HUB_URL}/hub/v1/sites/{urllib.parse.quote(SITE_SLUG, safe='')}/{path}", json.dumps(body).encode(),
+        {"Authorization": f"Bearer {SITE_TOKEN}", "Content-Type": "application/json", "User-Agent": "jaga-site/1"})
+    with urllib.request.urlopen(req, timeout=PUSH_TIMEOUT_S) as r:
+        return json.load(r)
+
+
+def push_rows(latest):
+    # Tie-safe resume: the hub only says how far it got in received_at. Within and across iterations we keep our own
+    # (received_at, id) cursor, so rows sharing one received_at that straddle a batch or iteration boundary are not
+    # lost, and rejected rows are skipped for good. The cursor is dropped when the hub reports less than it did
+    # before (hub data lost), and ignored when it is behind the hub.
+    cur = push["cursor"]
+    if not (cur and cur[0] >= latest and (push["latest"] is None or latest >= push["latest"])):
+        cur = (latest, 2**62)
+    push["latest"] = latest
+    cols = ("received_at",) + COLS
+    for _ in range(MAX_BATCHES):
+        with closing(db()) as c:
+            rows = c.execute(f"SELECT id, {','.join(cols)} FROM readings WHERE (received_at, id) > (?, ?) "
+                             "ORDER BY received_at, id LIMIT ?", (*cur, BATCH)).fetchall()
+        if not rows:
+            break
+        hub_post("readings", {"rows": [{k: r[k] for k in cols} for r in rows]})
+        cur = (rows[-1]["received_at"], rows[-1]["id"])
+        push["cursor"] = cur
+    with closing(db()) as c:
+        push["pending"] = c.execute("SELECT COUNT(*) FROM readings WHERE (received_at, id) > (?, ?)", cur).fetchone()[0]
+
+
+def push_once():
+    s = site()
+    ans = hub_post("heartbeat", {
+        "name": s["name"], "lat": s["lat"], "lng": s["lng"], "api_version": API_VERSION, "site_time": time.time(),
+        "master_ok": health["master_ok"], "status": status() if master["status"] else None, "nodes": nodes()})
+    push["last_ok"] = time.time()  # the hub answered; a row failure below still backs off
+    push_rows(float(ans["latest_received_at"]))
+
+
+def push_step():
+    """One iteration. Returns the seconds to wait before the next."""
+    try:
+        push_once()
+        msg = None
+    except urllib.error.HTTPError as e:
+        msg = {401: "The hub rejected this site's token.", 403: "This site isn't approved on the hub."}.get(
+            e.code, f"The hub answered with an error ({e.code}). Retrying.")
+    except Exception as e:  # a bad iteration must never end the thread
+        msg = f"The hub can't be reached ({e!r}). Retrying."
+    if msg is None:
+        if push["err"]:
+            print("hub reachable again", flush=True)
+        push.update(fails=0, err=None)
+        return PUSH_OK_S
+    if msg != push["err"]:  # once per transition, not every retry
+        push["err"] = msg
+        print(msg, flush=True)
+    push["fails"] += 1
+    return PUSH_BACKOFF_S[min(push["fails"], len(PUSH_BACKOFF_S)) - 1]
+
+
+def push_loop():
+    while True:
+        time.sleep(push_step())
+
+
 @asynccontextmanager
 async def lifespan(_):
     try:
@@ -176,6 +260,8 @@ async def lifespan(_):
         health["db_ok"] = False
         print("database unavailable at startup:", repr(e), flush=True)
     threading.Thread(target=poll_loop, daemon=True).start()
+    if hub_on():
+        threading.Thread(target=push_loop, daemon=True, name="push").start()
     yield
 
 
@@ -239,7 +325,11 @@ def healthz():
         return err(503, "db_unavailable", "The server can't open its database.")
     if not health["db_ok"]:
         return err(503, "db_unavailable", "The server can't open its database.")
-    return {"ok": True, "rejected": rejected}
+    hub = None if not hub_on() else {
+        "ok": push["err"] is None and push["last_ok"] is not None,
+        "last_push_s": None if push["last_ok"] is None else time.time() - push["last_ok"],
+        "pending_rows": push["pending"]}
+    return {"ok": True, "rejected": rejected, "hub": hub}
 
 
 @app.get("/api/status")
