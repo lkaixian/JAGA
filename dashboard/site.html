@@ -199,6 +199,7 @@ tr.stale{opacity:.5}
     <span class="site" id="siteName"></span>
     <div class="spacer"></div>
     <a class="homelink" href="/">Home</a>
+    <a class="homelink" href="/dashboard">All servers</a>
     <div class="clock" id="clock">--:--:--</div>
     <div class="livepill"><i class="dot"></i><span id="modeLabel">Simulated feed</span></div>
   </header>
@@ -391,9 +392,11 @@ const NODES = [
       'supabase' reads real rows once your ESP32 is posting.
    ========================================================================= */
 // 'api' = our nginx/Python server (or the master directly); add ?sim to the URL for the simulator.
-// Served at /server/<slug> by the hub, the API lives under that same prefix; otherwise at the site root.
+// The hub serves a site's API under /server/<slug>. Its dashboard is at /<slug> or /server/<slug>; this stack's own
+// dashboard (no hub) is at /site, with the API at the root.
+const PAGE_SLUG = (location.pathname.match(/^\/(?:server\/)?([a-z0-9][a-z0-9-]{1,38}[a-z0-9])\/?$/) || [])[1];
 const API = /^https?:/.test(location.protocol)
-  ? location.origin + (location.pathname.match(/^\/server\/[a-z0-9-]+/) || [''])[0]
+  ? location.origin + (PAGE_SLUG && PAGE_SLUG !== 'site' ? '/server/' + PAGE_SLUG : '')
   : 'http://jaga-master.local';
 const SONAR_ERR = -2147483648;                       // INT32_MIN from the firmware
 const nodeNum = id => +id.slice(-2);                 // 'JAGA-03' -> 3
@@ -456,6 +459,8 @@ async function fetchApi(){
   const failed = [st, ...results].filter(r => r.status === 'rejected');
   failed.forEach(r => console.error(r.reason));
   pollErr = failed.map(r => r.reason.message).join('; ');       // shown as a tooltip on the banner and pill
+  const gone = [st, ...results].find(r => r.status === 'rejected' && r.reason.code === 'unknown_site');
+  if(gone) throw gone.reason;                                // no such site: tick() stops polling
   if(results.every(r => r.status === 'rejected')) throw results[0].reason;   // no history at all = failed poll, whatever /api/status said
   apiStatus = st.status === 'fulfilled' ? st.value : null;     // a failed /api/status alone is not a failed poll
   if(st.status === 'rejected' && st.reason.code === 'master_unreachable') apiStatus = { master_ok: false };  // server up, master never reached
@@ -738,8 +743,9 @@ function drawLink(){
   else if(link === 'site') msg = `This site is offline. Showing data from ${hhmm(lastOk - (apiStatus.site_age_s||0)*1000)}.`;
   else if(link === 'master') msg = "The server can't reach the master node."
     + (apiStatus.master_age_s != null ? ` Readings stopped at ${hhmm(lastOk - apiStatus.master_age_s*1000)}.` : '');
-  b.className = 'banner link' + (msg ? ' on' : '');
+  b.className = 'banner link' + (msg || link === 'unknown' ? ' on' : '');
   $('linkMsg').textContent = msg;
+  if(link === 'unknown') $('linkMsg').innerHTML = `There is no server called '${PAGE_SLUG}'. <a href="/dashboard" style="color:var(--signal)">See all servers</a>`;   // PAGE_SLUG is [a-z0-9-] only
   b.title = $('modeLabel').parentElement.title = pollErr;
   $('healthNote').textContent = [apiStatus?.sd_ok === false && "The master's SD card isn't logging.",
     apiStatus?.radio_ok === false && "The master's radio isn't receiving."].filter(Boolean).join(' ');
@@ -809,7 +815,7 @@ function render(){
 /* =========================================================================
    6. LOOP
    ========================================================================= */
-let fails = 0;
+let fails = 0, stopped = false;
 async function tick(){
   if(SOURCE.mode === 'simulate'){
     simStep();
@@ -819,9 +825,10 @@ async function tick(){
       lastOk = Date.now(); fails = 0;
       link = apiStatus?.site_ok === false ? 'site' : apiStatus?.master_ok === false ? 'master' : 'ok';          // absent master_ok = talking to the master itself
     } catch(e){
-      fails++; link = 'server';                                      // keep what we have on screen
+      fails++; link = e.code === 'unknown_site' ? 'unknown' : 'server';   // keep what we have on screen
+      if(link === 'unknown') stopped = true;
     }
-    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'site' ? 'Site offline — showing last data' : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
+    $('modeLabel').textContent = link === 'unknown' ? 'No such server' : link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'site' ? 'Site offline — showing last data' : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
   } else {
     try {
       const rows = await SOURCE.fetchLatest();
@@ -941,11 +948,11 @@ async function loadPositions(){
 window.addEventListener('load', () => { if(leafMap){ leafMap.invalidateSize(); fitKey = ''; drawMap(); } });  // fonts/layout settle after first paint
 let pollTimer, busy = false;
 async function poll(){                         // api mode: 10 s, or 20 / 30 s after failures
-  if(busy) return;
+  if(busy || stopped) return;
   busy = true; clearTimeout(pollTimer);
   try { await tick(); } catch(e){ console.error(e); }          // a render bug must not stop the polling
   busy = false;
-  pollTimer = setTimeout(poll, 10000 * Math.min(3, Math.max(1, fails)));
+  if(!stopped) pollTimer = setTimeout(poll, 10000 * Math.min(3, Math.max(1, fails)));
 }
 render();
 if(SOURCE.mode !== 'simulate'){ poll(); loadPositions(); }

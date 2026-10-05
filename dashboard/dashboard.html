@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Servers | J.A.G.A</title>
+<meta name="description" content="Choose a J.A.G.A server to open its live dashboard.">
+<meta name="theme-color" content="#061726">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --abyss:#061726; --hull:#0C2941; --panel:#0F3252; --rule:#1B4B72;
+  --signal:#2FE3BE; --amber:#FFB020; --siren:#FF5A47; --mist:#7FA6C6; --paper:#E7F3FF;
+  --font-display:"Saira Condensed","Arial Narrow",Arial,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--abyss);color:var(--paper);font:16px/1.55 var(--font-body);overflow-x:hidden}
+a{color:var(--signal)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--amber);outline-offset:3px;border-radius:4px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header{background:var(--hull);border-bottom:1px solid var(--rule);position:sticky;top:0;z-index:5}
+header .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;padding-top:10px;padding-bottom:10px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--paper);margin-right:auto}
+.brand img{width:36px;height:36px;border-radius:6px}
+.brand b{font:700 26px/1 var(--font-display);letter-spacing:.08em}
+.brand small{font-size:12px;color:var(--mist);display:block;line-height:1.2}
+nav ul{list-style:none;margin:0;padding:0;display:flex;gap:4px 18px;flex-wrap:wrap}
+nav a{color:var(--paper);text-decoration:none;font-weight:500;padding:6px 2px;border-bottom:2px solid transparent}
+nav a:hover,nav a[aria-current]{border-bottom-color:var(--signal)}
+h1,h2{font-family:var(--font-display);font-weight:700;margin:0 0 16px;line-height:1.1}
+h1{font-size:clamp(34px,6vw,52px)}
+h2{font-size:28px;letter-spacing:.03em}
+.intro{padding:40px 0 0}
+.intro p{max-width:62ch;margin:0}
+section{padding:32px 0 8px}
+.btn{display:inline-block;padding:10px 20px;border-radius:6px;font:inherit;font-weight:600;border:2px solid var(--signal);min-height:44px;background:transparent;color:var(--signal);cursor:pointer}
+.btn:hover{background:rgba(47,227,190,.12)}
+.msg{font-size:14px;color:var(--mist);margin:10px 0 0}
+.msg:empty{display:none}
+.cap{font-size:14px;color:var(--mist);margin:-8px 0 14px}
+.filter{display:block;width:100%;max-width:360px;margin:0 0 16px;padding:10px 12px;font:inherit;color:var(--paper);background:var(--hull);border:1px solid var(--rule);border-radius:6px;min-height:44px}
+.filter[hidden]{display:none}
+.filter:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+.ok{color:var(--signal)} .warn{color:var(--amber)} .bad{color:var(--siren)}
+ul.grid{list-style:none;margin:16px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:16px}
+ul.grid:empty{display:none}
+.card{display:grid;grid-template-columns:56px 1fr;gap:4px 14px;align-items:start;min-width:0;height:100%;background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:16px;color:var(--paper);text-decoration:none}
+.card:hover{border-color:var(--signal)}
+.card:focus-visible{outline:3px solid var(--amber);outline-offset:3px}
+.card .logo,.card .avatar{width:56px;height:56px;border-radius:50%;object-fit:contain;background:var(--paper);grid-row:span 4}
+.card .avatar{display:flex;align-items:center;justify-content:center;font:700 28px var(--font-display);color:var(--abyss);background:var(--mist)}
+.card h3{margin:0;font:600 22px/1.15 var(--font-display);letter-spacing:.03em}
+.big .card{padding:20px;grid-template-columns:72px 1fr;border-color:var(--signal)}
+.big .card .logo,.big .card .avatar{width:72px;height:72px}
+.big .card h3{font-size:26px}
+.meta{font:13px/1.4 var(--font-mono);color:var(--mist);overflow-wrap:anywhere}
+.dist{font:600 22px var(--font-mono);color:var(--signal)}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:4px}
+.chip{font:500 13px var(--font-mono);padding:2px 10px;border-radius:999px;border:1px solid currentColor;min-width:64px;text-align:center}
+.chip.pending{color:var(--mist)}
+.card.off .meta,.seen{color:var(--paper)}
+.seen{font:13px var(--font-mono)}
+.err{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
+.err button{margin-left:8px;font:inherit;font-weight:600;padding:8px 14px;border-radius:6px;border:2px solid var(--signal);background:transparent;color:var(--signal);cursor:pointer;min-height:44px}
+footer{margin-top:48px;border-top:1px solid var(--rule);background:var(--hull);padding:24px 0;font-size:14px;color:var(--mist)}
+footer p{margin:0}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/logo.png" width="36" height="36" alt=""><span><b>J.A.G.A</b><small>Jaringan Amaran Geo-Spatial &amp; AI</small></span></a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/">Home</a></li>
+        <li><a href="/dashboard" aria-current="page">Servers</a></li>
+        <li><a href="/#app">App</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="intro">
+      <h1>Servers</h1>
+      <p>Choose a server to open its live dashboard.</p>
+    </div>
+
+    <section aria-labelledby="hNear">
+      <h2 id="hNear">Nearest to you</h2>
+      <button type="button" class="btn" id="geoBtn">Use my location</button>
+      <p class="msg" id="geoMsg" role="status">Allows the page to read your location once. It is not stored.</p>
+      <ul class="grid big" id="near"></ul>
+    </section>
+
+    <section aria-labelledby="hAll">
+      <h2 id="hAll">All servers</h2>
+      <p class="cap" id="cap"></p>
+      <input class="filter" id="filter" type="search" placeholder="Filter by name" aria-label="Filter by name" hidden>
+      <div id="all"><p class="msg">Loading the server list&hellip;</p></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap"><p>A student project for IUIC UTHM 2026.</p></div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  var DASH = '—', servers = [], pos = null, q = '';
+  var $ = function (id) { return document.getElementById(id); };
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function hhmm(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function num(v) { return v == null || v === '' ? NaN : Number(v); }
+  function originOf(e) { try { return new URL(e.url).origin; } catch (x) { return null; } }
+  function hasPos(e) { return isFinite(num(e.lat)) && isFinite(num(e.lng)); }
+
+  // Page of one server: /slug for hub entries, /site for a stack without a hub. Relative when on this origin.
+  function target(e) {
+    var o = originOf(e);
+    if (!o) return '/dashboard';
+    return (o === location.origin ? '' : o) + (e.slug ? '/' + e.slug : '/site');
+  }
+  function address(e) {
+    var o = originOf(e);
+    return o ? o.replace(/^[a-z]+:\/\//i, '') + (e.slug ? '/' + e.slug : '/site') : DASH;
+  }
+  function km(e) {
+    var r = Math.PI / 180, dLa = (num(e.lat) - pos.lat) * r, dLo = (num(e.lng) - pos.lng) * r;
+    var a = Math.pow(Math.sin(dLa / 2), 2) + Math.cos(pos.lat * r) * Math.cos(num(e.lat) * r) * Math.pow(Math.sin(dLo / 2), 2);
+    return 12742 * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+  function fmtKm(d) { return (d < 10 ? d.toFixed(1) : String(Math.round(d))) + ' km'; }
+  function fmtCoord(v, p, n) { var x = num(v); return Math.abs(x).toFixed(4) + '°' + (x >= 0 ? p : n); }
+
+  // One health request per server for the life of the page, so re-sorting does not ping again.
+  function ping(e) {
+    if (e._ping) return e._ping;
+    var o = originOf(e);
+    if (!o) return (e._ping = Promise.resolve(null));
+    var ctl = new AbortController(), t0 = performance.now();
+    var timer = setTimeout(function () { ctl.abort(); }, 4000);
+    return (e._ping = fetch(o + (e.slug ? '/server/' + e.slug : '') + '/api/health', { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
+      .then(function () { clearTimeout(timer); return Math.round(performance.now() - t0); },
+            function () { clearTimeout(timer); return null; }));
+  }
+
+  function card(e, big) {
+    var li = document.createElement('li'), a = document.createElement('a');
+    a.className = 'card'; a.href = target(e);
+    li.appendChild(a);
+    function avatar() {
+      var d = document.createElement('div');
+      d.className = 'avatar'; d.setAttribute('aria-hidden', 'true');
+      d.textContent = (String(e.name || '?').trim().charAt(0) || '?').toUpperCase();
+      return d;
+    }
+    var logo, o = originOf(e);
+    if (e.logo && o) {
+      logo = document.createElement('img');
+      logo.className = 'logo'; logo.alt = ''; logo.width = logo.height = big ? 72 : 56;
+      logo.src = String(e.logo).charAt(0) === '/' ? o + e.logo : e.logo;
+      logo.addEventListener('error', function () { if (logo.parentNode) logo.replaceWith(avatar()); });
+    }
+    a.appendChild(logo || avatar());
+    var h = document.createElement('h3'); h.textContent = e.name || 'Unnamed server'; a.appendChild(h);
+    var m = document.createElement('div'); m.className = 'meta'; m.textContent = address(e); a.appendChild(m);
+    if (hasPos(e)) {
+      var c = document.createElement('div'); c.className = 'meta';
+      c.textContent = fmtCoord(e.lat, 'N', 'S') + ', ' + fmtCoord(e.lng, 'E', 'W');
+      a.appendChild(c);
+    }
+    var row = document.createElement('div'); row.className = 'row'; a.appendChild(row);
+    if (big) {
+      var d = document.createElement('span'); d.className = 'dist'; d.textContent = fmtKm(e._km); row.appendChild(d);
+      return li;
+    }
+    var chip = document.createElement('span'); chip.className = 'chip pending'; chip.textContent = DASH; row.appendChild(chip);
+    if (e.online === false) {
+      a.classList.add('off');
+      chip.textContent = 'offline'; chip.className = 'chip bad';
+      var s = document.createElement('span'); s.className = 'seen';
+      var ls = num(e.last_seen_s);
+      s.textContent = isFinite(ls) ? 'Last seen ' + hhmm(Date.now() - ls * 1000) : 'Never reported';
+      row.appendChild(s);
+      return li;
+    }
+    ping(e).then(function (ms) {
+      if (ms == null) { chip.textContent = 'offline'; chip.className = 'chip bad'; }
+      else { chip.textContent = ms + ' ms'; chip.className = 'chip ' + (ms < 100 ? 'ok' : ms < 300 ? 'warn' : 'bad'); }
+    });
+    return li;
+  }
+
+  function render() {
+    var box = $('all'), near = $('near');
+    servers.forEach(function (e) { e._km = pos && hasPos(e) ? km(e) : null; });
+    near.textContent = '';
+    if (pos) {
+      servers.filter(function (e) { return e._km != null; }).sort(function (a, b) { return a._km - b._km; })
+        .slice(0, 3).forEach(function (e) { near.appendChild(card(e, true)); });
+    }
+    var list = servers.slice().sort(function (a, b) {
+      if (pos && a._km !== b._km) {           // servers without coordinates go last
+        if (a._km == null) return 1;
+        if (b._km == null) return -1;
+        return a._km - b._km;
+      }
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+    $('cap').textContent = pos ? 'Sorted by distance from you.' : 'Sorted by name.';
+    $('filter').hidden = servers.length <= 6;
+    var f = q.trim().toLowerCase();
+    if (f) list = list.filter(function (e) { return String(e.name || '').toLowerCase().indexOf(f) >= 0; });
+    box.textContent = '';
+    if (!list.length) { box.appendChild(note('No server matches that name.')); return; }
+    var ul = document.createElement('ul'); ul.className = 'grid';
+    list.forEach(function (e) { ul.appendChild(card(e, false)); });
+    box.appendChild(ul);
+  }
+  function note(t) { var p = document.createElement('p'); p.className = 'msg'; p.textContent = t; return p; }
+
+  /* ---------- location ---------- */
+  function say(t) { $('geoMsg').textContent = t; }
+  function got(lat, lng) {
+    pos = { lat: lat, lng: lng };
+    $('geoBtn').hidden = true;
+    say(servers.length && !servers.some(hasPos) ? 'No server has a listed location.' : '');
+    render();
+  }
+  function locate() {
+    var t = new URLSearchParams(location.search).get('near');   // testing aid: ?near=lat,lng simulates a position and skips the prompt
+    if (t) { var p = t.split(','); if (p.length === 2 && isFinite(num(p[0])) && isFinite(num(p[1]))) return got(+p[0], +p[1]); }
+    if (!navigator.geolocation) return say("Couldn't get your location. Showing all servers.");
+    navigator.geolocation.getCurrentPosition(function (r) { got(r.coords.latitude, r.coords.longitude); }, function (err) {
+      say(err && err.code === 1 ? 'Location is blocked for this site. Showing all servers.' : "Couldn't get your location. Showing all servers.");
+    }, { timeout: 10000, enableHighAccuracy: false });
+  }
+  $('geoBtn').addEventListener('click', locate);
+  $('filter').addEventListener('input', function (ev) { q = ev.target.value; render(); });
+  if (new URLSearchParams(location.search).has('near')) locate();
+  else if (navigator.permissions && navigator.permissions.query) {
+    navigator.permissions.query({ name: 'geolocation' }).then(function (s) { if (s.state === 'granted') locate(); }, function () {});
+  }
+
+  /* ---------- list ---------- */
+  function load() {
+    var box = $('all');
+    var ctl = new AbortController(), timer = setTimeout(function () { ctl.abort(); }, 8000);
+    fetch('/servers.json', { cache: 'no-store', signal: ctl.signal }).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('http');
+      return r.json();
+    }).then(function (b) {
+      if (!Array.isArray(b)) throw new Error('bad');
+      servers = b.filter(function (e) { return e && typeof e === 'object' && e.url; });
+      if (!servers.length) { box.textContent = ''; box.appendChild(note('No servers are registered yet.')); $('cap').textContent = ''; return; }
+      if (pos && !servers.some(hasPos)) say('No server has a listed location.');
+      render();
+    }).catch(function () {
+      clearTimeout(timer);
+      box.textContent = '';
+      var d = document.createElement('div'); d.className = 'err'; d.setAttribute('role', 'alert');
+      d.appendChild(document.createTextNode('Could not load the server list.'));
+      var bt = document.createElement('button'); bt.type = 'button'; bt.textContent = 'Retry';
+      bt.addEventListener('click', function () { box.textContent = 'Loading the server list…'; load(); });
+      d.appendChild(bt); box.appendChild(d);
+    });
+  }
+  load();
+})();
+</script>
+</body>
+</html>

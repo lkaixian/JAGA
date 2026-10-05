@@ -102,7 +102,7 @@ footer a{color:var(--signal)}
       <p>Ultrasonic sensors in the drains send their readings by radio to a master node. The master serves them to this site and to the phone app.</p>
       <p>The dashboard shows the water level, the rate of rise, a 60-minute projection and the status of each node.</p>
       <div class="btns">
-        <a class="btn primary" href="/dashboard">Open the live dashboard</a>
+        <a class="btn primary" href="/dashboard">Choose a server</a>
         <a class="btn secondary" href="https://jaringan-amaran-geospatial-ai.netlify.app/" target="_blank" rel="noopener noreferrer">Demo dashboard (simulated storm)</a>
       </div>
       <p class="note">The demo uses made-up data.</p>
@@ -229,14 +229,20 @@ footer a{color:var(--signal)}
   refresh();
 
   /* ---------- servers ---------- */
-  function ping(url) {
+  function ping(e) {
     var ctl = new AbortController(), t0 = performance.now();
     var timer = setTimeout(function () { ctl.abort(); }, 4000);
-    return fetch(url.replace(/\/+$/, '') + '/api/health', { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
+    var o; try { o = new URL(e.url).origin; } catch (x) { return Promise.resolve(null); }
+    return fetch(o + (e.slug ? '/server/' + e.slug : '') + '/api/health', { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
       .then(function () { clearTimeout(timer); return Math.round(performance.now() - t0); },
             function () { clearTimeout(timer); return null; });
   }
   function fmtCoord(v, pos, neg) { var n = Number(v); return isFinite(n) ? Math.abs(n).toFixed(4) + '°' + (n >= 0 ? pos : neg) : DASH; }
+  // Page of one server: /slug for hub entries, /site for a stack without a hub. Relative when on this origin.
+  function target(e) {
+    var o; try { o = new URL(e.url).origin; } catch (x) { return '/dashboard'; }
+    return (o === location.origin ? '' : o) + (e.slug ? '/' + e.slug : '/site');
+  }
   function card(s) {
     var url = String(s.url || ''), el = document.createElement('article');
     el.className = 'card';
@@ -265,10 +271,7 @@ footer a{color:var(--signal)}
     chip.setAttribute('role', 'status');
     row.appendChild(chip);
     var a = document.createElement('a'); a.textContent = 'Open dashboard';
-    var href = url.replace(/\/+$/, '');
-    if (url.indexOf('/server/') < 0) href += '/dashboard';
-    a.href = href;
-    try { if (new URL(href, location.href).origin !== location.origin) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } } catch (e) { /* keep same tab */ }
+    a.href = target(s);
     row.appendChild(a);
     el.appendChild(row);
     if (s.online === false) {
@@ -279,7 +282,7 @@ footer a{color:var(--signal)}
       row.insertBefore(seen, a);
       return el;
     }
-    ping(url).then(function (ms) {
+    ping(s).then(function (ms) {
       if (ms == null) { chip.textContent = 'offline'; chip.className = 'chip bad'; }
       else { chip.textContent = ms + ' ms'; chip.className = 'chip ' + (ms < 100 ? 'ok' : ms < 300 ? 'warn' : 'bad'); }
     });

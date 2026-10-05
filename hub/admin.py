@@ -13,7 +13,7 @@ from contextlib import closing
 
 DB = os.environ.get("HUB_DB", "/data/hub.db")
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$")
-RESERVED = {"api", "hub", "server", "servers", "admin", "classic", "dashboard", "downloads", "static"}
+RESERVED = {"api", "hub", "server", "servers", "admin", "classic", "dashboard", "downloads", "static", "site", "index"}
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sites (
     slug TEXT PRIMARY KEY, name TEXT, lat REAL, lng REAL, logo TEXT, token_hash TEXT NOT NULL,
