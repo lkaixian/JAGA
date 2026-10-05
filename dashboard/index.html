@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>J.A.G.A: flood early warning for campus drains</title>
+<meta name="description" content="J.A.G.A measures water level in campus drains at Universiti Tun Hussein Onn Malaysia every minute and shows it on a live dashboard and a phone app.">
+<meta name="theme-color" content="#061726">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/logo.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="J.A.G.A: flood early warning for campus drains">
+<meta property="og:description" content="Water level in the campus drains at UTHM Parit Raja, measured every minute, with a live dashboard and a phone app.">
+<meta property="og:image" content="/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --abyss:#061726; --hull:#0C2941; --panel:#0F3252; --rule:#1B4B72;
+  --signal:#2FE3BE; --amber:#FFB020; --siren:#FF5A47; --mist:#7FA6C6; --paper:#E7F3FF;
+  --font-display:"Saira Condensed","Arial Narrow",Arial,sans-serif;
+  --font-body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,Consolas,"Courier New",monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:80px}
+body{margin:0;background:var(--abyss);color:var(--paper);font:16px/1.55 var(--font-body);overflow-x:hidden}
+a{color:var(--signal)}
+a:focus-visible,button:focus-visible{outline:3px solid var(--amber);outline-offset:3px;border-radius:4px}
+.wrap{max-width:1040px;margin:0 auto;padding:0 16px}
+header{background:var(--hull);border-bottom:1px solid var(--rule);position:sticky;top:0;z-index:5}
+header .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;padding-top:10px;padding-bottom:10px}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--paper);margin-right:auto}
+.brand img{width:36px;height:36px;border-radius:6px}
+.brand b{font:700 26px/1 var(--font-display);letter-spacing:.08em}
+.brand small{font-size:12px;color:var(--mist);display:block;line-height:1.2}
+nav ul{list-style:none;margin:0;padding:0;display:flex;gap:4px 18px;flex-wrap:wrap}
+nav a{color:var(--paper);text-decoration:none;font-weight:500;padding:6px 2px;border-bottom:2px solid transparent}
+nav a:hover{border-bottom-color:var(--signal)}
+h1,h2{font-family:var(--font-display);font-weight:700;margin:0;line-height:1.1}
+h1{font-size:clamp(34px,6vw,52px);max-width:18ch;margin-bottom:16px}
+h2{font-size:30px;letter-spacing:.03em;margin-bottom:16px}
+.intro{padding:40px 0 24px}
+.intro p{max-width:62ch;margin:0 0 12px;color:var(--paper)}
+.btns{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+.btn{display:inline-block;padding:12px 20px;border-radius:6px;font-weight:600;text-decoration:none;border:2px solid var(--signal);min-height:44px}
+.btn.primary{background:var(--signal);color:var(--abyss)}
+.btn.primary:hover{background:#5df0d0}
+.btn.secondary{color:var(--signal);background:transparent}
+.btn.secondary:hover{background:rgba(47,227,190,.12)}
+.note{font-size:14px;color:var(--mist);margin:10px 0 0}
+.strip{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;min-height:132px;margin:8px 0 8px}
+.strip dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;margin:0}
+.strip dt{font:600 12px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mist)}
+.strip dd{margin:2px 0 0;font:500 22px/1.25 var(--font-mono)}
+.strip dd small{font:400 14px var(--font-body);color:var(--mist);display:block}
+.strip .msg{margin:12px 0 0;font-size:14px;min-height:21px;color:var(--mist)}
+.strip .msg.bad{color:var(--amber)}
+.ok{color:var(--signal)} .warn{color:var(--amber)} .bad{color:var(--siren)}
+section{padding:36px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:16px;display:grid;grid-template-columns:56px 1fr;gap:4px 14px;align-items:start;min-width:0}
+.card .logo,.card .avatar{width:56px;height:56px;border-radius:50%;object-fit:contain;background:var(--paper);grid-row:span 3}
+.card .avatar{display:flex;align-items:center;justify-content:center;font:700 28px var(--font-display);color:var(--abyss);background:var(--mist)}
+.card h3{margin:0;font:600 22px/1.15 var(--font-display);letter-spacing:.03em}
+.card .meta{font:13px/1.4 var(--font-mono);color:var(--mist);overflow-wrap:anywhere}
+.card .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;margin-top:6px}
+.chip{font:500 13px var(--font-mono);padding:2px 10px;border-radius:999px;border:1px solid currentColor;min-width:64px;text-align:center}
+.chip.pending{color:var(--mist)}
+.err{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px}
+.err button{margin-left:8px;font:inherit;font-weight:600;padding:8px 14px;border-radius:6px;border:2px solid var(--signal);background:transparent;color:var(--signal);cursor:pointer}
+#apk{min-height:60px}
+footer{margin-top:48px;border-top:1px solid var(--rule);background:var(--hull);padding:24px 0;font-size:14px;color:var(--mist)}
+footer p{margin:0 0 6px}
+footer a{color:var(--signal)}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/logo.png" width="36" height="36" alt=""><span><b>J.A.G.A</b><small>Jaringan Amaran Geo-Spatial &amp; AI</small></span></a>
+    <nav aria-label="Main">
+      <ul>
+        <li><a href="/dashboard">Dashboard</a></li>
+        <li><a href="#servers">Servers</a></li>
+        <li><a href="#app">App</a></li>
+        <li><a href="https://jaringan-amaran-geospatial-ai.netlify.app/" target="_blank" rel="noopener noreferrer">Demo</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="intro">
+      <h1>Water level in the campus drains, measured every minute.</h1>
+      <p>Ultrasonic sensors in the drains send their readings by radio to a master node. The master serves them to this site and to the phone app.</p>
+      <p>The dashboard shows the water level, the rate of rise, a 60-minute projection and the status of each node.</p>
+      <div class="btns">
+        <a class="btn primary" href="/dashboard">Open the live dashboard</a>
+        <a class="btn secondary" href="https://jaringan-amaran-geospatial-ai.netlify.app/" target="_blank" rel="noopener noreferrer">Demo dashboard (simulated storm)</a>
+      </div>
+      <p class="note">The demo uses made-up data.</p>
+    </div>
+
+    <div class="strip" role="region" aria-label="Live status">
+      <dl>
+        <div><dt>Master node</dt><dd id="stMaster">&mdash;</dd></div>
+        <div><dt>Nodes reporting</dt><dd id="stNodes">&mdash;</dd></div>
+        <div><dt>Highest level</dt><dd id="stLevel">&mdash;</dd></div>
+      </dl>
+      <p class="msg" id="stMsg" aria-live="polite">Checking the server&hellip;</p>
+    </div>
+
+    <section id="servers" aria-labelledby="hServers">
+      <h2 id="hServers">Servers</h2>
+      <div id="serverList" class="grid"><p class="note">Loading the server list&hellip;</p></div>
+    </section>
+
+    <section id="app" aria-labelledby="hApp">
+      <h2 id="hApp">Android app</h2>
+      <p style="max-width:62ch;margin-top:0">The app shows the same readings, picks the nearest server by location, and sends an alert when a drain reaches the danger level while the app is open.</p>
+      <div id="apk"><p class="note">Checking for the download&hellip;</p></div>
+      <p class="note">64-bit ARM Android phones only. The phone will ask you to allow installs from this source. There is no iPhone version yet.</p>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Map data &copy; OpenStreetMap contributors.</p>
+    <p>A project at Universiti Tun Hussein Onn Malaysia, Parit Raja.</p>
+    <p><a href="/classic">Older dashboard</a></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  var SENTINEL = -2147483648, FRESH_S = 180, DASH = '—';
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getJson(url, ms) {
+    var ctl = new AbortController();
+    var t = setTimeout(function () { ctl.abort(); }, ms || 8000);
+    return fetch(url, { cache: 'no-store', signal: ctl.signal }).then(function (r) {
+      return r.text().then(function (txt) {
+        var body = null;
+        try { body = JSON.parse(txt); } catch (e) { /* not JSON */ }
+        return { status: r.status, ok: r.ok, body: body };
+      });
+    }).then(function (x) { clearTimeout(t); return x; }, function (e) { clearTimeout(t); throw e; });
+  }
+  function list(b, key) {
+    if (Array.isArray(b)) return b;
+    if (b && Array.isArray(b[key])) return b[key];
+    if (b && Array.isArray(b.data)) return b.data;
+    return [];
+  }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function hhmm(ms) { var d = new Date(ms); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function setStat(id, text, cls, sub) {
+    var el = $(id);
+    el.className = cls || '';
+    el.textContent = text;
+    if (sub) { var s = document.createElement('small'); s.textContent = sub; el.appendChild(s); }
+  }
+  function setMsg(text, bad) { var m = $('stMsg'); m.textContent = text; m.className = 'msg' + (bad ? ' bad' : ''); }
+
+  /* ---------- live status ---------- */
+  var delay = 15000, lastGood = null;
+  function showFailure(text) {
+    setMsg(text + (lastGood ? ' Showing data from ' + hhmm(lastGood) + '.' : ''), true);
+    if (!lastGood) {
+      setStat('stMaster', DASH); setStat('stNodes', DASH); setStat('stLevel', DASH);
+    }
+  }
+  function refresh() {
+    Promise.all([getJson('/api/status'), getJson('/api/latest'), getJson('/api/nodes')]).then(function (r) {
+      var st = r[0], lt = r[1], nd = r[2];
+      var down = st.status === 503 && st.body && st.body.error && st.body.error.code === 'master_unreachable';
+      if (down || (st.ok && st.body && st.body.master_ok === false)) {
+        setStat('stMaster', 'Unreachable', 'bad');
+        showFailure('The server can’t reach the master node.');
+        delay = 15000; // server answered, so no back-off
+        return;
+      }
+      if (!st.ok || !lt.ok || !nd.ok) throw new Error('http');
+      var now = Date.now() / 1000;
+      var nodes = list(nd.body, 'nodes'), rows = list(lt.body, 'rows');
+      var names = {}, listed = {};
+      nodes.forEach(function (n) { if (n && n.node_id != null) { listed[n.node_id] = 1; names[n.node_id] = n.name || ('Node ' + n.node_id); } });
+      var newest = {}, best = null;
+      rows.forEach(function (row) {
+        if (!row || row.node_id == null) return;
+        var rcv = Number(row.received_at);
+        if (isFinite(rcv) && (!newest[row.node_id] || rcv > newest[row.node_id])) newest[row.node_id] = rcv;
+        var mm = Number(row.water_level_mm);
+        if (row.water_level_mm != null && isFinite(mm) && mm !== SENTINEL && (!best || mm > best.mm)) best = { mm: mm, id: row.node_id };
+      });
+      var total = nodes.length, reporting = 0;
+      Object.keys(newest).forEach(function (id) {
+        if ((total === 0 || listed[id]) && now - newest[id] < FRESH_S) reporting++;
+      });
+      lastGood = Date.now();
+      delay = 15000;
+      setStat('stMaster', 'Reachable', 'ok');
+      if (!rows.length) {
+        setStat('stNodes', total ? '0 of ' + total : DASH, total ? 'bad' : '', total ? 'reporting' : '');
+        setStat('stLevel', DASH);
+        setMsg('No readings yet.', true);
+        return;
+      }
+      var cls = total && reporting === 0 ? 'bad' : (total && reporting < total ? 'warn' : 'ok');
+      setStat('stNodes', total ? reporting + ' of ' + total : String(reporting), cls, 'reporting');
+      if (best) setStat('stLevel', (best.mm / 1000).toFixed(2) + ' m', '', names[best.id] || ('Node ' + best.id));
+      else setStat('stLevel', DASH);
+      setMsg('Updated ' + hhmm(lastGood) + '.', false);
+    }).catch(function () {
+      showFailure('Can’t reach the server.');
+      delay = Math.min(delay * 2, 60000);
+    }).then(function () { setTimeout(refresh, delay); });
+  }
+  refresh();
+
+  /* ---------- servers ---------- */
+  function ping(url) {
+    var ctl = new AbortController(), t0 = performance.now();
+    var timer = setTimeout(function () { ctl.abort(); }, 4000);
+    return fetch(url.replace(/\/+$/, '') + '/api/health', { mode: 'no-cors', cache: 'no-store', signal: ctl.signal })
+      .then(function () { clearTimeout(timer); return Math.round(performance.now() - t0); },
+            function () { clearTimeout(timer); return null; });
+  }
+  function fmtCoord(v, pos, neg) { var n = Number(v); return isFinite(n) ? Math.abs(n).toFixed(4) + '°' + (n >= 0 ? pos : neg) : DASH; }
+  function card(s) {
+    var url = String(s.url || ''), el = document.createElement('article');
+    el.className = 'card';
+    function avatar() {
+      var a = document.createElement('div');
+      a.className = 'avatar'; a.setAttribute('aria-hidden', 'true');
+      a.textContent = (String(s.name || '?').trim().charAt(0) || '?').toUpperCase();
+      return a;
+    }
+    var logo;
+    if (s.logo) {
+      var src; try { src = new URL(s.logo, url).href; } catch (e) { src = null; }
+      if (src) {
+        logo = document.createElement('img');
+        logo.className = 'logo'; logo.alt = ''; logo.width = 56; logo.height = 56; logo.src = src;
+        logo.addEventListener('error', function () { if (logo.parentNode) logo.replaceWith(avatar()); });
+      }
+    }
+    el.appendChild(logo || avatar());
+    var h = document.createElement('h3'); h.textContent = s.name || 'Unnamed server'; el.appendChild(h);
+    var meta = document.createElement('div'); meta.className = 'meta';
+    meta.textContent = url.replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '') + ' · ' + fmtCoord(s.lat, 'N', 'S') + ', ' + fmtCoord(s.lng, 'E', 'W');
+    el.appendChild(meta);
+    var row = document.createElement('div'); row.className = 'row';
+    var chip = document.createElement('span'); chip.className = 'chip pending'; chip.textContent = DASH;
+    chip.setAttribute('role', 'status');
+    row.appendChild(chip);
+    var a = document.createElement('a'); a.textContent = 'Open dashboard';
+    var href = url.replace(/\/+$/, '') + '/dashboard';
+    a.href = href;
+    try { if (new URL(href, location.href).origin !== location.origin) { a.target = '_blank'; a.rel = 'noopener noreferrer'; } } catch (e) { /* keep same tab */ }
+    row.appendChild(a);
+    el.appendChild(row);
+    ping(url).then(function (ms) {
+      if (ms == null) { chip.textContent = 'offline'; chip.className = 'chip bad'; }
+      else { chip.textContent = ms + ' ms'; chip.className = 'chip ' + (ms < 100 ? 'ok' : ms < 300 ? 'warn' : 'bad'); }
+    });
+    return el;
+  }
+  function loadServers() {
+    var box = $('serverList');
+    getJson('/servers.json').then(function (r) {
+      if (!r.ok || !Array.isArray(r.body)) throw new Error('bad');
+      box.textContent = '';
+      if (!r.body.length) { box.innerHTML = '<p class="note">No servers are listed.</p>'; return; }
+      r.body.forEach(function (s) { if (s && s.url) box.appendChild(card(s)); });
+    }).catch(function () {
+      box.textContent = '';
+      var d = document.createElement('div'); d.className = 'err'; d.setAttribute('role', 'alert');
+      d.appendChild(document.createTextNode('Could not load the server list.'));
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Retry';
+      b.addEventListener('click', function () { box.textContent = 'Loading the server list…'; loadServers(); });
+      d.appendChild(b); box.appendChild(d);
+    });
+  }
+  loadServers();
+
+  /* ---------- apk ---------- */
+  var apk = $('apk');
+  function noApk() { apk.innerHTML = '<p>The app download isn’t published on this server yet.</p>'; }
+  fetch('/downloads/jaga.apk', { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+    if (!r.ok) return noApk();
+    apk.textContent = '';
+    var a = document.createElement('a');
+    a.className = 'btn primary'; a.href = '/downloads/jaga.apk'; a.setAttribute('download', 'jaga.apk');
+    a.textContent = 'Download the Android app (APK)';
+    apk.appendChild(a);
+  }).catch(noApk);
+})();
+</script>
+</body>
+</html>
