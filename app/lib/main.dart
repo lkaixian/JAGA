@@ -183,7 +183,7 @@ class _NodeCard extends StatelessWidget {
               r.distanceMm == null ? 'distance —' : '${r.distanceMm} mm',
             ].join('  ·  ')),
             if (note != null) Text(note, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            Text('node $id · logged ${_age(s.ageS(id))}', style: Theme.of(context).textTheme.bodySmall),
+            Text('node $id${s.ageS(id) == null ? '' : ' · logged ${_age(s.ageS(id))}'}', style: Theme.of(context).textTheme.bodySmall),
           ],
         ]),
       ),

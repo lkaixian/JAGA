@@ -44,6 +44,40 @@ void main() {
   healthTests();
   lobbyTests();
   errorTests();
+  fixTests();
+}
+
+void fixTests() {
+  Reading r(int ts, double? at, [int level = 600]) => Reading(ts, 1, level, null, null, null, receivedAt: at);
+  test('isNewReading: reboot, duplicate, no receivedAt', () {
+    expect(isNewReading(null, r(5, 1)), isTrue);
+    expect(isNewReading(r(50000, 100), r(30, 110)), isTrue); // master rebooted, clock restarted
+    expect(isNewReading(r(50, 100), r(50, 100)), isFalse); // duplicate
+    expect(isNewReading(r(50, 100), r(60, 100)), isFalse); // same receivedAt wins over logTs
+    expect(isNewReading(r(50, null), r(60, null)), isTrue);
+    expect(isNewReading(r(50, null), r(50, null)), isFalse);
+    expect(isNewReading(r(50, 100), r(60, null)), isTrue); // mixed: fall back to logTs
+  });
+
+  test('errorCode and ApiException', () {
+    expect(errorCode('{"error":{"code":"master_unreachable","message":"x"}}'), 'master_unreachable');
+    expect(errorCode('<html>'), isNull);
+    expect(errorCode('{"error":"x"}'), isNull);
+    expect(errorCode('[]'), isNull);
+    expect(ApiException(503, 'master_unreachable').toString(), 'HTTP 503');
+  });
+
+  test('Node.fromJson without name', () {
+    expect(Node.fromJson({'node_id': 2, 'lat': 1.5, 'lng': 2.5}).name, 'Node 2');
+    expect(Node.fromJson({'node_id': 2, 'name': 'JAGA-02', 'lat': null, 'lng': null}).name, 'JAGA-02');
+  });
+
+  test('lastValid skips sonar faults', () {
+    const f = -2147483648;
+    expect(lastValid([r(1, 1, 800), r(2, 2, f)])!.levelMm, 800);
+    expect(lastValid([r(1, 1, f)]), isNull);
+    expect(lastValid([]), isNull);
+  });
 }
 
 void errorTests() {

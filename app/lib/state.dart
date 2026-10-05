@@ -114,8 +114,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   /// When the master's last reading arrived, for the banner.
   DateTime? get masterLastAt {
-    final a = serverStatus?.masterAgeS;
-    return lastOk == null || a == null ? lastOk : lastOk!.subtract(Duration(seconds: a));
+    final a = serverStatus?.masterAgeS; // absent when the server has never reached the master: no time
+    return lastOk == null || a == null ? null : lastOk!.subtract(Duration(seconds: a));
   }
 
   void _reset() {
@@ -180,11 +180,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Node? nodeById(int id) => nodes.where((n) => n.id == id).firstOrNull;
   Reading? latestOf(int id) => history[id]!.lastOrNull;
 
-  /// Seconds since the node's newest reading, by the master's own clock.
+  /// Seconds since the node's newest reading, phone clock minus server receive time.
   int? ageS(int id) {
-    final r = latestOf(id), s = serverStatus;
-    if (r == null || s == null) return null;
-    return s.nowS - r.logTs;
+    final t = latestOf(id)?.receivedAt;
+    return t == null ? null : (DateTime.now().millisecondsSinceEpoch / 1000 - t).floor();
   }
 
   Future<void> poll() async {
@@ -204,7 +203,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       serverStatus = await _api.status();
       for (final r in latest) {
         final list = history[r.nodeId];
-        if (list == null || (list.isNotEmpty && r.logTs <= list.last.logTs)) continue;
+        if (list == null || (list.isNotEmpty && !isNewReading(list.last, r))) continue;
         list.add(r);
         if (list.length > maxPoints) list.removeAt(0);
       }
@@ -241,9 +240,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       }
       _lastStatus[id] = s;
       final h = nodeHealth(r, nowS);
-      if (lostSignalFires(_lastHealth[id], h, r.levelMm, warnMm)) {
+      final v = lastValid(history[id]!);
+      if (v != null && lostSignalFires(_lastHealth[id], h, v.levelMm, warnMm)) {
         _show(100 + id, 'Lost signal: $name',
-            'No report for ${((nowS - r.receivedAt!) / 60).floor()} min. Last level ${(r.levelMm / 1000).toStringAsFixed(2)} m.');
+            'No report for ${((nowS - r.receivedAt!) / 60).floor()} min. Last level ${(v.levelMm / 1000).toStringAsFixed(2)} m.');
       }
       _lastHealth[id] = h;
     }

@@ -33,6 +33,35 @@ String? joinFailure(Object? e, [Status? st]) {
 bool lostSignalFires(NodeHealth? prev, NodeHealth now, int levelMm, double warnMm) =>
     now == NodeHealth.noSignal && prev != null && prev != NodeHealth.noSignal && levelMm >= warnMm;
 
+/// Newest reading in [list] (oldest first) with a valid sonar value, or null.
+Reading? lastValid(List<Reading> list) => list.reversed.where((r) => r.sonarOk).firstOrNull;
+
+/// log_timestamp_s is the master's clock and can restart after a reboot, so prefer the server's receivedAt.
+bool isNewReading(Reading? last, Reading r) => last == null
+    ? true
+    : (last.receivedAt != null && r.receivedAt != null)
+        ? r.receivedAt! > last.receivedAt!
+        : r.logTs > last.logTs;
+
+/// HTTP error from the server; [code] is error.code from a JSON body, if any.
+class ApiException implements Exception {
+  final int statusCode;
+  final String? code;
+  ApiException(this.statusCode, [this.code]);
+  @override
+  String toString() => 'HTTP $statusCode';
+}
+
+/// error.code from a {"error":{"code":...}} body, or null for anything else.
+String? errorCode(String body) {
+  try {
+    final c = ((jsonDecode(body) as Map)['error'] as Map)['code'];
+    return c is String ? c : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Server unreachable beats master unreachable beats connected.
 LinkState linkState({required bool serverReachable, required bool masterOk}) =>
     !serverReachable ? LinkState.serverDown : (!masterOk ? LinkState.masterDown : LinkState.connected);
@@ -52,7 +81,7 @@ class Node {
   final double lat, lng;
   Node(this.id, this.name, this.lat, this.lng);
   factory Node.fromJson(Map<String, dynamic> j) =>
-      Node(j['node_id'], j['name'], (j['lat'] as num?)?.toDouble() ?? double.nan, (j['lng'] as num?)?.toDouble() ?? double.nan);
+      Node(j['node_id'], j['name'] as String? ?? 'Node ${j['node_id']}', (j['lat'] as num?)?.toDouble() ?? double.nan, (j['lng'] as num?)?.toDouble() ?? double.nan);
 }
 
 class Reading {
@@ -97,14 +126,22 @@ class ApiClient {
 
   Future<dynamic> _get(String path) async {
     final res = await http.get(Uri.parse('${host.startsWith('http') ? host : 'http://$host'}$path')).timeout(const Duration(seconds: 5));
-    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    if (res.statusCode != 200) throw ApiException(res.statusCode, errorCode(res.body));
     return jsonDecode(res.body);
   }
 
   Future<List<T>> _list<T>(String path, T Function(Map<String, dynamic>) f) async =>
       [for (final j in await _get(path) as List) f(j as Map<String, dynamic>)];
 
-  Future<Status> status() async => Status.fromJson(await _get('/api/status'));
+  /// 503 master_unreachable = the server is fine but has not reached the master yet: masterOk false.
+  Future<Status> status() async {
+    try {
+      return Status.fromJson(await _get('/api/status'));
+    } on ApiException catch (e) {
+      if (e.code == 'master_unreachable') return Status(0, 0, false, false, false);
+      rethrow;
+    }
+  }
   Future<List<Node>> nodes() => _list('/api/nodes', Node.fromJson);
   Future<List<Reading>> latest() => _list('/api/latest', Reading.fromJson);
 
