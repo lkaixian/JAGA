@@ -4,12 +4,15 @@ import os
 import sqlite3
 import threading
 import time
+import traceback
 import urllib.request
 from contextlib import asynccontextmanager, closing
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from trend import analyze
 
@@ -26,6 +29,7 @@ health = {"master_ok": False, "last_ok": 0.0, "fails": 0}
 def db():
     c = sqlite3.connect(DB, timeout=10)
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA journal_mode=WAL")  # readers don't block the poll writer
     return c
 
 
@@ -97,6 +101,34 @@ async def lifespan(_):
 app = FastAPI(lifespan=lifespan)
 
 
+def err(status, code, message):
+    return JSONResponse({"error": {"code": code, "message": message}}, status)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def on_http(_, e):
+    if e.status_code < 500:
+        return err(e.status_code, "bad_request", str(e.detail).rstrip(".") + ".")
+    return err(e.status_code, "internal", "The server hit an unexpected problem.")
+
+
+@app.exception_handler(RequestValidationError)
+async def on_invalid(_, e):
+    return err(422, "bad_request", "The request has a missing or invalid value.")
+
+
+@app.exception_handler(sqlite3.Error)
+async def on_db(_, e):
+    print("db error:", repr(e), flush=True)
+    return err(503, "db_unavailable", "The server can't open its database.")
+
+
+@app.exception_handler(Exception)
+async def on_unhandled(_, e):
+    traceback.print_exception(e)
+    return err(500, "internal", "The server hit an unexpected problem.")
+
+
 def newest(node, limit):
     with closing(db()) as c:
         return c.execute("SELECT * FROM readings WHERE node_id=? ORDER BY id DESC LIMIT ?",
@@ -114,7 +146,7 @@ def node_ids():
 
 def check_node(node):
     if node < 1:
-        raise HTTPException(400, "node must be 1 or higher")
+        raise HTTPException(400, "The node number must be 1 or higher")
 
 
 @app.get("/api/health")
@@ -123,7 +155,7 @@ def healthz():
         with closing(db()) as c:
             c.execute("SELECT 1 FROM readings LIMIT 1")
     except sqlite3.Error:
-        return JSONResponse({"error": {"code": "db_unavailable", "message": "The server can't open its database."}}, 503)
+        return err(503, "db_unavailable", "The server can't open its database.")
     return {"ok": True}
 
 
@@ -131,8 +163,7 @@ def healthz():
 def status():
     st = master["status"]
     if not st:
-        return JSONResponse({"error": {"code": "master_unreachable",
-                                       "message": "The server hasn't reached the master node yet."}}, 503)
+        return err(503, "master_unreachable", "The server hasn't reached the master node yet.")
     elapsed = time.time() - master["status_at"]  # keep now_s ticking while the master is unreachable
     return {**st, "now_s": st["now_s"] + int(elapsed), "uptime_s": st["uptime_s"] + int(elapsed),
             "master_age_s": int(elapsed), "master_ok": health["master_ok"]}

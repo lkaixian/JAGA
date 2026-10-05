@@ -65,4 +65,32 @@ assert len(c.get("/api/latest").json()) == 1 and len(c.get("/api/history?node=1"
 poll(status=200, nodes=200, latest=200, n=3)
 assert c.get("/api/status").json()["master_ok"] is True and A.health["fails"] == 0
 assert len(c.get("/api/history?node=1").json()) == 3
+
+def shape(r, status, code):
+    assert r.status_code == status and list(r.json()) == ["error"], r.text
+    assert r.json()["error"]["code"] == code and r.json()["error"]["message"], r.text
+
+
+shape(c.get("/api/history?node=0"), 400, "bad_request")  # unknown node
+shape(c.get("/api/history?node=abc"), 422, "bad_request")  # bad query value
+shape(c.get("/api/nope"), 404, "bad_request")
+shape(c.put("/api/nodes/1", json={"lat": 999, "lng": 0}), 422, "bad_request")
+A.master["status"] = None  # as before the master was ever reached
+shape(c.get("/api/status"), 503, "master_unreachable")
+
+real_db = A.db
+
+
+def boom():
+    raise A.sqlite3.OperationalError("database is locked")
+
+
+A.db = boom
+shape(c.get("/api/latest"), 503, "db_unavailable")
+shape(c.get("/api/health"), 503, "db_unavailable")
+A.db = real_db
+A.node_ids = lambda: 1 / 0  # unhandled error: no text leaks
+r = TestClient(A.app, raise_server_exceptions=False).get("/api/latest")
+shape(r, 500, "internal")
+assert "division" not in r.text
 print("poll ok")
