@@ -667,7 +667,8 @@ function drawTable(){
   let html = '';
   NODES.forEach(n => {
     const { st, p, rate, sev } = nodeInfo(n);
-    const [cc, ct] = st === 'live' ? [SEV[sev], SEVLABEL[sev]] : CHIP[st];
+    const lostSev = st === 'nosignal' && sev >= 0;           // keep the severity chip, add a marker
+    const [cc, ct] = st === 'live' || lostSev ? [SEV[sev], SEVLABEL[sev]] : CHIP[st];
     const has = sev >= 0;
     html += `
       <tr data-id="${n.id}" class="${n.id===activeId?'active':''} ${st==='nosignal'?'stale':''}">
@@ -678,7 +679,7 @@ function drawTable(){
         <td class="num hide-sm">${p?.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
         <td class="num hide-sm">${p?.batt == null ? '—' : p.batt.toFixed(2) + ' V'}</td>
         <td class="num hide-sm">${p?.rssi == null ? '—' : p.rssi + ' dBm'}</td>
-        <td><span class="chip ${cc}">${ct}</span></td>
+        <td><span class="chip ${cc}">${ct}</span>${lostSev ? ' <span class="chip stale">No signal</span>' : ''}</td>
       </tr>`;
   });
   $('nodeRows').innerHTML = html;
@@ -695,8 +696,9 @@ function drawBanner(){
   });
 
   const b = $('banner');
-  const lost = worstNode?.st === 'nosignal';
-  if(worst < 2 && !(worst === 1 && lost)){ b.className = 'banner'; return; }
+  const lostLines = NODES.map(n => ({ n, ...nodeInfo(n) })).filter(i => i.st === 'nosignal' && i.sev >= 1)
+    .map(i => `<em>${i.n.id}</em> hasn't reported for ${i.mins} min. Last level <em>${i.p.level.toFixed(2)} m</em>.`);
+  if(worst < 2 && !lostLines.length){ b.className = 'banner'; return; }
 
   const minsToDanger = worstNode.rate > 0
     ? Math.round(((CFG.thrDanger - worstNode.p.level) / worstNode.rate) * 60)
@@ -712,7 +714,7 @@ function drawBanner(){
           ? ` — projected to reach danger level in <em>${minsToDanger} min</em>.`
           : `.`)
     : '';
-  if(lost) msg += (msg ? '<br>' : '') + `<em>${worstNode.n.id}</em> hasn't reported for ${worstNode.mins} min. Last level <em>${worstNode.p.level.toFixed(2)} m</em>.`;
+  msg += (msg && lostLines.length ? '<br>' : '') + lostLines.join('<br>');
   $('bannerMsg').innerHTML = msg;
 }
 
@@ -742,7 +744,7 @@ function render(){
   $('nodeName').textContent = n.name;
   $('nodeMeta').textContent = n.id + ' · ' + n.area;
   $('tiles').classList.toggle('stale', st !== 'live');
-  $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? 'Sensor fault' : st === 'nodata' ? 'No data yet' : '';
+  $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? `${n.name}'s water sensor isn't reading. Check the sonar wiring.` : st === 'nodata' ? 'No data yet' : '';
   if(!p || st === 'fault'){      // never draw an old level as current
     ['waterLine','waterBody'].forEach(i => $(i).setAttribute('d', ''));
     $('beamLabel').textContent = '— m';
@@ -756,13 +758,15 @@ function render(){
   if(!p){ $('chart').innerHTML = ''; drawMap(); return; }
   drawChart(buf);
   const fc = forecast(p.level, rate);
+  const fault = st === 'fault';
 
   $('rateV').className = 'v ' + (rate>=CFG.rateWarning?'bad':rate>=CFG.rateWatch?'warn':'good');
-  $('rateV').innerHTML = `${rate>=0?'+':''}${rate.toFixed(2)} <small>m/h</small>`;
+  $('rateV').innerHTML = fault ? '—' : `${rate>=0?'+':''}${rate.toFixed(2)} <small>m/h</small>`;
+  $('rateSub').textContent = fault ? 'No reading' : 'Over last 15 min';
 
   $('fcV').className = 'v ' + (fc>=CFG.thrDanger?'bad':fc>=CFG.thrWarning?'warn':'good');
-  $('fcV').innerHTML  = `${fc.toFixed(2)} <small>m</small>`;
-  $('fcSub').textContent = rate <= 0
+  $('fcV').innerHTML  = fault ? '—' : `${fc.toFixed(2)} <small>m</small>`;
+  $('fcSub').textContent = fault ? 'No reading' : rate <= 0
     ? 'Receding toward base flow'
     : fc >= CFG.thrDanger ? 'Breaches danger threshold'
     : fc >= CFG.thrWarning ? 'Reaches warning level'
@@ -806,7 +810,7 @@ async function tick(){
     } catch(e){
       fails++; link = 'server';                                      // keep what we have on screen
     }
-    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : 'Offline — showing last data';
+    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
   } else {
     try {
       const rows = await SOURCE.fetchLatest();
