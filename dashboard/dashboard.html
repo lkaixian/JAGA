@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="favicon.ico" sizes="48x48">
 <!-- This site is hosted on Netlify. Anyone can build and deploy a site
      like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=c926b064-579b-4199-bb22-9365d4eaa640
      Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
@@ -61,6 +62,8 @@ body{
 }
 .topbar .spacer{flex:1}
 .clock{font-family:var(--font-mono);font-size:13px;color:var(--mist);letter-spacing:.04em}
+.homelink{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mist);text-decoration:none;border:1px solid var(--rule);border-radius:999px;padding:5px 11px}
+.homelink:hover,.homelink:focus-visible{color:var(--paper);border-color:var(--signal)}
 .livepill{
   display:inline-flex;align-items:center;gap:7px;
   font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
@@ -192,6 +195,7 @@ tr.stale{opacity:.5}
       <span>Jaringan Amaran Geo-Spatial & AI &middot; Monitoring System</span>
     </div>
     <div class="spacer"></div>
+    <a class="homelink" href="/">Home</a>
     <div class="clock" id="clock">--:--:--</div>
     <div class="livepill"><i class="dot"></i><span id="modeLabel">Simulated feed</span></div>
   </header>

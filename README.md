@@ -101,18 +101,25 @@ MASTER_URL=http://<master-ip> docker compose up --build   # then open http://loc
   Its drain graphic assumes the sensor is 1.45 m above the floor, so set `SONAR_MOUNT_HEIGHT_MM` to 1450 in `node_config.h`.
 - `dashboard/classic.html` is the earlier dashboard (settings dialog, trend table).
 
-### Public HTTPS via Cloudflare Tunnel (optional)
+### Putting it on the internet: jaga.larmkx.com (Cloudflare Tunnel)
 
-Lets the dashboard and the phone app reach the server from anywhere over HTTPS, with no port forwarding.
-Only nginx is exposed; the master stays on your LAN and only the Python container talks to it.
+One-time setup, about 15 minutes. No router ports are opened and the master node is never exposed: only nginx is.
 
-1. Domain on Cloudflare DNS (e.g. `larmkx.com`). Zero Trust > Networks > Tunnels > Create tunnel > Cloudflared.
-2. Copy the token. Add a public hostname, e.g. `jaga.larmkx.com`, service `http://nginx:80`.
-3. `TUNNEL_TOKEN=<token> docker compose --profile tunnel up -d`, then open `https://jaga.larmkx.com`.
-4. In the Flutter app settings enter `https://jaga.larmkx.com`.
+1. **Domain on Cloudflare.** Add `larmkx.com` to a free Cloudflare account and change the nameservers at your registrar to the two Cloudflare gives you. Wait until Cloudflare shows the domain as Active.
+2. **Create the tunnel.** Cloudflare dashboard > Zero Trust > Networks > Tunnels > Create a tunnel > Cloudflared. Name it `jaga`. On the next screen copy the long token (the text after `--token`). Skip the install step: Docker runs it for you.
+3. **Public hostname.** In the tunnel's Public Hostname tab add: subdomain `jaga`, domain `larmkx.com`, service type `HTTP`, URL `nginx:80`. Cloudflare creates the DNS record itself.
+4. **Give the token to Docker.** In `C:\JAGA` create a file named `.env` (it is gitignored, never commit it) containing:
+   ```
+   TUNNEL_TOKEN=<the token>
+   MASTER_URL=http://<master IP on your Wi-Fi>
+   ```
+5. **Start it.** `docker compose --profile tunnel up -d`
+6. **Check it.** Open `https://jaga.larmkx.com` (homepage), `https://jaga.larmkx.com/dashboard`, and `https://jaga.larmkx.com/servers.json` (the list the app reads).
 
-Writes (moving a pin) are rejected for tunnel traffic; reads are public. To require a login for reads too, add a
-Cloudflare Access policy (email one-time PIN) on that hostname. Moving pins works from `http://localhost:8088` on the LAN.
+What you get: `/` homepage with the server list and app download, `/dashboard` the live dashboard, `/servers.json` the directory for the app, `/api/...` the data.
+The PC running Docker must stay on and on the same network as the master node. Visitors can read; moving a pin is blocked for tunnel traffic. To require a login for reading too, add a Cloudflare Access policy (email one-time PIN) on `jaga.larmkx.com`, but note the phone app cannot pass that login.
+To offer the Android app on the homepage, copy the APK to `downloads/jaga.apk` (the folder is gitignored).
+Server list for the app: add one entry per deployment to `dashboard/servers.json` (`name`, `url`, `lat`, `lng`, optional `logo` path or URL). This server's icon comes from `SITE_LOGO` (default `/uthm.png`).
 
 ## App: server lobby
 
