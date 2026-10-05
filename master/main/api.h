@@ -8,6 +8,8 @@
 extern "C" {
 #endif
 
+#define MAX_NODES 8 // node ids 1..MAX_NODES
+
 // One cached reading, field-for-field the same as a row of telem.csv (see
 // TELEMETRY_CSV_HEADER in main.c).
 typedef struct {
@@ -31,7 +33,7 @@ uint32_t current_timestamp_s(void);
  *          GET /api/status                    - now_s, uptime_s, rtc_ok, sd_ok, radio_ok
  *          GET /api/nodes                     - static per-node id/name/lat/lng
  *          GET /api/latest                    - each node's most recent reading
- *          GET /api/history?node=1-3&limit=N  - that node's recent readings, newest first
+ *          GET /api/history?node=1-8&limit=N  - that node's recent readings, newest first
  *        Does not wait for Wi-Fi: the retry handler keeps reconnecting and
  *        httpd serves as soon as an IP arrives (logged as "Got IP"). Call once
  *        from app_main after hardware init.

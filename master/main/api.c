@@ -35,14 +35,16 @@ static const node_meta_t NODE_META[] = {
     { 1, "Slave 1 (Upstream)",  1.8710f, 103.0790f },
     { 2, "Slave 2 (Midstream)", 1.8656f, 103.0850f },
     { 3, "Master (Downstream)", 1.8620f, 103.0900f },
+    { 4, "Node 4",              1.8584f, 103.0950f },
+    { 5, "Node 5",              1.8548f, 103.1000f },
 };
 #define NODE_META_COUNT (sizeof(NODE_META) / sizeof(NODE_META[0]))
 
-// Per-node circular buffer of recent readings, indexed 1-3 (slot 0 unused -
-// mirrors main.c's own last_reading[4]/has_reading[4] convention).
-static api_reading_t s_history[4][HISTORY_LEN];
-static int s_history_count[4] = {0};
-static int s_history_next[4]  = {0}; // next slot this node will write
+// Per-node circular buffer of recent readings, indexed 1..MAX_NODES (slot 0
+// unused - mirrors main.c's last_reading/has_reading convention).
+static api_reading_t s_history[MAX_NODES + 1][HISTORY_LEN];
+static int s_history_count[MAX_NODES + 1] = {0};
+static int s_history_next[MAX_NODES + 1]  = {0}; // next slot this node will write
 static SemaphoreHandle_t s_history_lock;
 
 static bool s_rtc_ok, s_sd_ok, s_radio_ok;
@@ -165,7 +167,7 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
 static esp_err_t latest_get_handler(httpd_req_t *req) {
     cJSON *arr = cJSON_CreateArray();
     xSemaphoreTake(s_history_lock, portMAX_DELAY);
-    for (int n = 1; n <= 3; n++) {
+    for (int n = 1; n <= MAX_NODES; n++) {
         if (s_history_count[n] == 0) continue;
         int last_idx = (s_history_next[n] - 1 + HISTORY_LEN) % HISTORY_LEN;
         cJSON_AddItemToArray(arr, reading_to_json(&s_history[n][last_idx]));
@@ -182,9 +184,9 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
         if (httpd_query_key_value(query, "node", val, sizeof(val)) == ESP_OK) node_id = atoi(val);
         if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK) limit = atoi(val);
     }
-    if (node_id < 1 || node_id > 3) {
+    if (node_id < 1 || node_id > MAX_NODES) {
         send_error(req, "400 Bad Request",
-                   "{\"error\":{\"code\":\"bad_request\",\"message\":\"node must be 1, 2 or 3\"}}");
+                   "{\"error\":{\"code\":\"bad_request\",\"message\":\"node must be 1 to 8\"}}");
         return ESP_OK;
     }
     if (limit <= 0 || limit > HISTORY_LEN) limit = HISTORY_LEN;
@@ -210,7 +212,7 @@ void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok) {
 }
 
 void api_record_reading(const api_reading_t *r) {
-    if (!s_history_lock || r->node_id < 1 || r->node_id > 3) return;
+    if (!s_history_lock || r->node_id < 1 || r->node_id > MAX_NODES) return;
     xSemaphoreTake(s_history_lock, portMAX_DELAY);
     int n = r->node_id;
     s_history[n][s_history_next[n]] = *r;
@@ -237,7 +239,7 @@ static esp_err_t start_httpd(void) {
     httpd_register_uri_handler(server, &latest_uri);
     httpd_register_uri_handler(server, &history_uri);
 
-    ESP_LOGI(TAG, "API up: GET /api/status, /api/nodes, /api/latest, /api/history?node=<1-3>&limit=<n>");
+    ESP_LOGI(TAG, "API up: GET /api/status, /api/nodes, /api/latest, /api/history?node=<1-8>&limit=<n>");
     return ESP_OK;
 }
 

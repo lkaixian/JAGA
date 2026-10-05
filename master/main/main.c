@@ -84,8 +84,9 @@ static bool radio_ok = false;
 
 // Latest known reading per node_id (1-3), kept across cycles so the OLED
 // still shows a slave's last report even on a cycle it didn't transmit.
-static telemetry_packet_t last_reading[4];
-static bool has_reading[4] = {false, false, false, false};
+static telemetry_packet_t last_reading[MAX_NODES + 1];
+static bool has_reading[MAX_NODES + 1];
+static uint8_t last_heard_id; // most recently received node, for the OLED
 
 uint32_t current_timestamp_s(void) { // also used by api.c
     if (rtc_available) {
@@ -115,7 +116,8 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
         }
     }
 
-    if (p->node_id >= 1 && p->node_id <= 3) {
+    if (p->node_id >= 1 && p->node_id <= MAX_NODES) {
+        last_heard_id = p->node_id;
         last_reading[p->node_id] = *p;
         has_reading[p->node_id] = true;
     }
@@ -132,7 +134,7 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
     });
 }
 
-// All values below are bounded in practice (node id 1-3, tenths-precision
+// All values below are bounded in practice (node id 1-8, tenths-precision
 // temp/humidity, tank-scale water level) and the 21-char OLED line already
 // truncates anything longer - GCC's static worst-case estimate for %f/%d
 // doesn't know that, so silence the false positive rather than pad buffers.
@@ -144,16 +146,21 @@ static void update_oled(int received_this_cycle) {
     char line[24];
     ssd1306_write_line(&oled, 0, "JAGA MASTER NODE");
 
-    for (int n = 1; n <= 3; n++) {
-        if (has_reading[n]) {
-            const telemetry_packet_t *p = &last_reading[n];
-            snprintf(line, sizeof(line), "N%d T%.1fC H%.0f%% W%ldMM",
-                     n, p->temperature, p->humidity, (long)p->water_level_mm);
-        } else {
-            snprintf(line, sizeof(line), "N%d NO DATA YET", n);
-        }
-        ssd1306_write_line(&oled, n, line);
+    int heard = 0;
+    for (int n = 1; n <= MAX_NODES; n++) heard += has_reading[n];
+    snprintf(line, sizeof(line), "NODES HEARD %d/%d", heard, MAX_NODES);
+    ssd1306_write_line(&oled, 1, line);
+
+    if (last_heard_id) {
+        const telemetry_packet_t *p = &last_reading[last_heard_id];
+        snprintf(line, sizeof(line), "LAST N%d W%ldMM", last_heard_id, (long)p->water_level_mm);
+        ssd1306_write_line(&oled, 2, line);
+        snprintf(line, sizeof(line), "T%.1fC H%.0f%%", p->temperature, p->humidity);
+    } else {
+        ssd1306_write_line(&oled, 2, "NO DATA YET");
+        line[0] = '\0';
     }
+    ssd1306_write_line(&oled, 3, line);
 
     snprintf(line, sizeof(line), "SD%s RTC%s",
              sd_available ? "OK" : "FAIL", rtc_available ? "OK" : "NO");

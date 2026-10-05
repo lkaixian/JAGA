@@ -203,6 +203,11 @@ void app_main(void) {
              packet.node_id, packet.temperature, packet.humidity, packet.distance_mm, packet.distance_stddev_mm,
              (long)packet.water_level_mm, packet.timestamp_s);
 
+    // All slaves share one nRF24 address, so offset each node's transmit time
+    // or nodes powered on in the same second would collide every cycle.
+#define MAX_STAGGER_SLOTS 8
+    vTaskDelay(pdMS_TO_TICKS((NODE_ID % MAX_STAGGER_SLOTS) * 150));
+
     // Queued packets go first, oldest to newest, so the master sees them in
     // order. Stop at the first failure: the rest stay queued and the new
     // packet goes to the back.

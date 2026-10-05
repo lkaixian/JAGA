@@ -33,7 +33,7 @@ unit - **edit these before flashing a new node**:
 
 | Setting | Meaning |
 |---|---|
-| `NODE_ID` | Unique per physical node (slaves currently 1 and 2, master is 3) |
+| `NODE_ID` | Unique per physical node (1-8; the master stores up to 8 nodes, currently slaves 1 and 2, master is 3) |
 | `SONAR_MOUNT_HEIGHT_MM` / `SONAR_MOUNT_ANGLE_DEG` | This node's sensor mount geometry, used to convert raw distance into water level |
 | `SONAR_MAX_RANGE_MM` | Sanity ceiling for sonar readings (defaults to the sensor's own spec range) |
 | `WIFI_SSID` / `WIFI_PASS` (master only) | Wi-Fi the master joins to serve the HTTP API |
@@ -72,7 +72,7 @@ resolve `.local`). CORS is open. The API comes up whenever Wi-Fi does, without a
 | `GET /api/status` | `{now_s, uptime_s, rtc_ok, sd_ok, radio_ok}` - `now_s` is the master's clock, use it to age readings |
 | `GET /api/nodes` | `[{node_id, name, lat, lng}]` - coordinates live only in `NODE_META` in `master/main/api.c` |
 | `GET /api/latest` | each node's newest reading |
-| `GET /api/history?node=1-3&limit=N` | that node's last N readings, newest first (max 90, RAM only) |
+| `GET /api/history?node=1-8&limit=N` | that node's last N readings, newest first (max 90, RAM only) |
 
 Sentinels: `temperature_c`/`humidity_pct == -999` = DHT22 failed;
 `water_level_mm == -2147483648` = sonar failed. Without an RTC, timestamps are
