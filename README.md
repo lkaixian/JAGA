@@ -67,7 +67,7 @@ resolve `.local`). CORS is open. The API comes up whenever Wi-Fi does, without a
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/status` | `{now_s, uptime_s, rtc_ok, sd_ok}` - `now_s` is the master's clock, use it to age readings |
+| `GET /api/status` | `{now_s, uptime_s, rtc_ok, sd_ok, radio_ok}` - `now_s` is the master's clock, use it to age readings |
 | `GET /api/nodes` | `[{node_id, name, lat, lng}]` - coordinates live only in `NODE_META` in `master/main/api.c` |
 | `GET /api/latest` | each node's newest reading |
 | `GET /api/history?node=1-3&limit=N` | that node's last N readings, newest first (max 90, RAM only) |

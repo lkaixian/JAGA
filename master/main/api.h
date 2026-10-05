@@ -28,7 +28,7 @@ uint32_t current_timestamp_s(void);
 /**
  * @brief Start Wi-Fi (WIFI_SSID/WIFI_PASS in node_config.h), mDNS as
  *        "jaga-master.local", and the HTTP JSON API on port 80:
- *          GET /api/status                    - now_s, uptime_s, rtc_ok, sd_ok
+ *          GET /api/status                    - now_s, uptime_s, rtc_ok, sd_ok, radio_ok
  *          GET /api/nodes                     - static per-node id/name/lat/lng
  *          GET /api/latest                    - each node's most recent reading
  *          GET /api/history?node=1-3&limit=N  - that node's recent readings, newest first
@@ -38,8 +38,8 @@ uint32_t current_timestamp_s(void);
  */
 esp_err_t api_start(void);
 
-/** @brief Report hardware state for /api/status. Call before api_start(). */
-void api_set_health(bool rtc_ok, bool sd_ok);
+/** @brief Report hardware state for /api/status. Call once before api_start() and again every cycle. */
+void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok);
 
 /**
  * @brief Record one reading (this node's own, or one drained from a slave)

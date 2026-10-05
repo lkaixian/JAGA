@@ -45,7 +45,7 @@ static int s_history_count[4] = {0};
 static int s_history_next[4]  = {0}; // next slot this node will write
 static SemaphoreHandle_t s_history_lock;
 
-static bool s_rtc_ok, s_sd_ok;
+static bool s_rtc_ok, s_sd_ok, s_radio_ok;
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
@@ -129,6 +129,7 @@ static esp_err_t status_get_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(o, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(o, "rtc_ok", s_rtc_ok);
     cJSON_AddBoolToObject(o, "sd_ok", s_sd_ok);
+    cJSON_AddBoolToObject(o, "radio_ok", s_radio_ok);
     send_json(req, o);
     return ESP_OK;
 }
@@ -175,7 +176,8 @@ static esp_err_t history_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-void api_set_health(bool rtc_ok, bool sd_ok) {
+void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok) {
+    s_radio_ok = radio_ok;
     s_rtc_ok = rtc_ok;
     s_sd_ok = sd_ok;
 }

@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <math.h>
+#include <string.h>
 #include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -66,6 +67,21 @@ static const uint8_t MASTER_ADDR[5] = {'M', 'A', 'S', 'T', '1'};
 // monotonic relative clock since this node last powered up, not wall-clock time.
 RTC_DATA_ATTR static int64_t uptime_us_at_wake = 0;
 
+// Packets that got no ACK, oldest first. Each carries its own timestamp_s, so
+// the master logs the original time when they are finally delivered.
+#define UNSENT_MAX 5
+RTC_DATA_ATTR static telemetry_packet_t unsent[UNSENT_MAX];
+RTC_DATA_ATTR static uint8_t unsent_n = 0;
+
+// The nRF24 already retries 15 times in hardware; these are on top of that.
+static bool send_with_retry(nrf24_t *radio, const telemetry_packet_t *p) {
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(300));
+        if (nrf24_send_packet(radio, p, sizeof(*p)) == ESP_OK) return true;
+    }
+    return false;
+}
+
 void app_main(void) {
     int64_t cycle_start = esp_timer_get_time();
     uint32_t timestamp_s = (uint32_t)(uptime_us_at_wake / 1000000);
@@ -88,8 +104,12 @@ void app_main(void) {
     gpio_pullup_dis(LED_GREEN);
     gpio_set_level(LED_GREEN, 0);
 
-    ESP_ERROR_CHECK(dht22_init(&dht, DHT_GPIO));
-    ESP_ERROR_CHECK(jsnsr40t_init(&sonar, SONAR_TX_PIN, SONAR_RX_PIN, SONAR_MAX_RANGE_MM));
+    // A failed init must not abort: that reboot-loops and drains the battery.
+    // Log it, skip that sensor, and send the sentinel for it instead.
+    bool dht_ok = (dht22_init(&dht, DHT_GPIO) == ESP_OK);
+    if (!dht_ok) ESP_LOGW(TAG, "DHT22 init failed. Sending -999 for temperature and humidity.");
+    bool sonar_ok = (jsnsr40t_init(&sonar, SONAR_TX_PIN, SONAR_RX_PIN, SONAR_MAX_RANGE_MM) == ESP_OK);
+    if (!sonar_ok) ESP_LOGW(TAG, "Sonar init failed. Sending the water level sentinel.");
 
     // Not fitted yet on this node - ds1307_init fails cleanly (NACK/timeout)
     // rather than aborting, and timestamp_s just keeps the relative fallback.
@@ -101,9 +121,12 @@ void app_main(void) {
         timestamp_s = (uint32_t)mktime(&rtc_time);
     }
 
-    ESP_ERROR_CHECK(nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE));
-    nrf24_set_channel(&radio, 76);
-    nrf24_open_tx_pipe(&radio, MASTER_ADDR);
+    bool radio_ok = (nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE) == ESP_OK);
+    if (radio_ok) {
+        nrf24_set_channel(&radio, 76);
+        radio_ok = (nrf24_open_tx_pipe(&radio, MASTER_ADDR) == ESP_OK);
+    }
+    if (!radio_ok) ESP_LOGW(TAG, "Radio init failed. Queuing the reading and retrying next wake.");
 
     telemetry_packet_t packet = {0};
     packet.node_id = NODE_ID;
@@ -117,7 +140,7 @@ void app_main(void) {
     // The bit-banged read is timing-sensitive and fails now and then, so retry
     // before giving up.
     esp_err_t dht_err = ESP_FAIL;
-    for (int attempt = 0; attempt < 3 && dht_err != ESP_OK; attempt++) {
+    for (int attempt = 0; attempt < 3 && dht_ok && dht_err != ESP_OK; attempt++) {
         if (attempt) vTaskDelay(pdMS_TO_TICKS(2000)); // DHT22 needs >= 2s between reads
         dht_err = dht22_read(&dht, &packet.temperature, &packet.humidity);
     }
@@ -130,7 +153,7 @@ void app_main(void) {
 
     uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
     int valid_samples = 0;
-    for (int i = 0; i < SONAR_SAMPLE_COUNT; i++) {
+    for (int i = 0; sonar_ok && i < SONAR_SAMPLE_COUNT; i++) {
         gpio_set_level(LED_BLUE, 1); // pulse once per sampling attempt
         uint32_t d;
         bool sample_ok = (jsnsr40t_read(&sonar, &d, 300) == ESP_OK);
@@ -180,12 +203,29 @@ void app_main(void) {
              packet.node_id, packet.temperature, packet.humidity, packet.distance_mm, packet.distance_stddev_mm,
              (long)packet.water_level_mm, packet.timestamp_s);
 
-    esp_err_t tx_err = nrf24_send_packet(&radio, &packet, sizeof(packet));
-    if (tx_err != ESP_OK) {
+    // Queued packets go first, oldest to newest, so the master sees them in
+    // order. Stop at the first failure: the rest stay queued and the new
+    // packet goes to the back.
+    bool sent = radio_ok;
+    while (sent && unsent_n > 0) {
+        if (send_with_retry(&radio, &unsent[0])) {
+            memmove(&unsent[0], &unsent[1], (--unsent_n) * sizeof(unsent[0]));
+        } else {
+            sent = false;
+        }
+    }
+    if (sent) sent = send_with_retry(&radio, &packet);
+    if (!sent) {
+        if (unsent_n == UNSENT_MAX) { // full: drop the oldest
+            memmove(&unsent[0], &unsent[1], (UNSENT_MAX - 1) * sizeof(unsent[0]));
+            unsent_n--;
+        }
+        unsent[unsent_n++] = packet;
         had_error = true;
     }
-    ESP_LOGI(TAG, "Radio -> %s", tx_err == ESP_OK ? "Packet acknowledged by receiver."
-                                                   : "TX failed (No ACK / Receiver offline).");
+    ESP_LOGI(TAG, "Radio -> %s (%u queued)",
+             sent ? "Packet acknowledged by receiver." : "TX failed. Reading queued for the next wake.",
+             unsent_n);
 
     gpio_set_level(LED_BLUE, 0); // scan phase done
 

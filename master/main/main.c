@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 
 #include "dht22.h"
 #include "jsnsr40t.h"
@@ -79,6 +80,7 @@ static bool rtc_available = false;
 static ssd1306_t oled;
 static bool oled_available = false;
 static bool sd_available = false;
+static bool radio_ok = false;
 
 // Latest known reading per node_id (1-3), kept across cycles so the OLED
 // still shows a slave's last report even on a cycle it didn't transmit.
@@ -152,7 +154,8 @@ static void update_oled(int received_this_cycle) {
              sd_available ? "OK" : "FAIL", rtc_available ? "OK" : "NO");
     ssd1306_write_line(&oled, 5, line);
 
-    snprintf(line, sizeof(line), "RX THIS CYCLE %d", received_this_cycle);
+    if (radio_ok) snprintf(line, sizeof(line), "RX THIS CYCLE %d", received_this_cycle);
+    else snprintf(line, sizeof(line), "RADIO FAIL");
     ssd1306_write_line(&oled, 6, line);
 
     snprintf(line, sizeof(line), "UPTIME %luS", (unsigned long)(esp_timer_get_time() / 1000000));
@@ -211,8 +214,12 @@ void app_main(void) {
     gpio_set_direction(LED_GREEN, GPIO_MODE_OUTPUT);
     gpio_set_level(LED_GREEN, 0);
 
-    ESP_ERROR_CHECK(dht22_init(&dht, DHT_GPIO));
-    ESP_ERROR_CHECK(jsnsr40t_init(&sonar, SONAR_TX_PIN, SONAR_RX_PIN, SONAR_MAX_RANGE_MM));
+    // A failed init must not abort and reboot-loop: log it, skip that sensor
+    // and report its sentinel instead.
+    bool dht_ok = (dht22_init(&dht, DHT_GPIO) == ESP_OK);
+    if (!dht_ok) ESP_LOGW(TAG, "DHT22 init failed. Reporting -999 for temperature and humidity.");
+    bool sonar_ok = (jsnsr40t_init(&sonar, SONAR_TX_PIN, SONAR_RX_PIN, SONAR_MAX_RANGE_MM) == ESP_OK);
+    if (!sonar_ok) ESP_LOGW(TAG, "Sonar init failed. Reporting the water level sentinel.");
 
     // Not fitted yet? ds1307_init fails cleanly (NACK/timeout) rather than
     // aborting, and current_timestamp_s() just keeps the relative fallback.
@@ -230,10 +237,16 @@ void app_main(void) {
     gpio_set_direction(SD_CS_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(SD_CS_PIN, 1);
 
-    ESP_ERROR_CHECK(nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE));
-    nrf24_set_channel(&radio, 76); // must match the slave (main/main.c)
-    ESP_ERROR_CHECK(nrf24_open_rx_pipe(&radio, 0, MASTER_ADDR, sizeof(telemetry_packet_t)));
-    nrf24_start_listening(&radio); // CE stays high from here - keeps receiving even while we're busy below
+    radio_ok = (nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE) == ESP_OK);
+    if (radio_ok) {
+        nrf24_set_channel(&radio, 76); // must match the slave (main/main.c)
+        radio_ok = (nrf24_open_rx_pipe(&radio, 0, MASTER_ADDR, sizeof(telemetry_packet_t)) == ESP_OK);
+    }
+    if (radio_ok) {
+        nrf24_start_listening(&radio); // CE stays high from here - keeps receiving even while we're busy below
+    } else {
+        ESP_LOGW(TAG, "Radio init failed. Slave nodes cannot be received; own readings still logged.");
+    }
 
     // A missing/bad SD card shouldn't crash-loop the whole node - log a
     // warning and keep running with SD logging disabled (status still shows
@@ -242,15 +255,21 @@ void app_main(void) {
 
     // A missing/misconfigured Wi-Fi network shouldn't block booting either -
     // same "degrade, don't crash-loop" treatment as the SD card and RTC above.
-    api_set_health(rtc_available, sd_available);
+    api_set_health(rtc_available, sd_available, radio_ok);
     if (api_start() != ESP_OK) {
         ESP_LOGW(TAG, "API failed to start - continuing with SD-only logging.");
     }
+
+    // A hung main loop now reboots the master after 30 s (panic = true).
+    esp_task_wdt_init(30, true);
+    esp_task_wdt_add(NULL);
 
     ESP_LOGI(TAG, "Master node ready (node_id=%u), listening + logging forever.", NODE_ID);
 
     while (1) {
         int64_t cycle_start = esp_timer_get_time();
+        esp_task_wdt_reset();
+        api_set_health(rtc_available, sd_available, radio_ok);
 
         telemetry_packet_t packet = {0};
         packet.node_id = NODE_ID;
@@ -264,7 +283,7 @@ void app_main(void) {
         // The bit-banged read is timing-sensitive and fails now and then
         // (e.g. "pulse width measurement timeout"), so retry before giving up.
         esp_err_t dht_err = ESP_FAIL;
-        for (int attempt = 0; attempt < 3 && dht_err != ESP_OK; attempt++) {
+        for (int attempt = 0; attempt < 3 && dht_ok && dht_err != ESP_OK; attempt++) {
             if (attempt) vTaskDelay(pdMS_TO_TICKS(2000)); // DHT22 needs >= 2s between reads
             dht_err = dht22_read(&dht, &packet.temperature, &packet.humidity);
         }
@@ -277,7 +296,7 @@ void app_main(void) {
 
         uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
         int valid_samples = 0;
-        for (int i = 0; i < SONAR_SAMPLE_COUNT; i++) {
+        for (int i = 0; sonar_ok && i < SONAR_SAMPLE_COUNT; i++) {
             gpio_set_level(LED_BLUE, 1); // pulse once per sampling attempt
             uint32_t d;
             bool sample_ok = (jsnsr40t_read(&sonar, &d, 300) == ESP_OK);
@@ -334,13 +353,14 @@ void app_main(void) {
         // Drain anything the slave nodes sent while we were busy above - the
         // nRF24 buffers up to 3 payloads in hardware on its own as long as
         // CE stays high, no CPU involvement needed until we poll it here.
-        int received = drain_radio(&radio);
+        int received = radio_ok ? drain_radio(&radio) : 0;
 
         update_oled(received);
 
         // Hold the status LEDs for 5s, then turn them off.
         // The OLED stays on the whole time for now (no blanking).
         vTaskDelay(pdMS_TO_TICKS(5000));
+        esp_task_wdt_reset();
         gpio_set_level(LED_RED, 0);
         gpio_set_level(LED_GREEN, 0);
 
@@ -351,7 +371,8 @@ void app_main(void) {
         while (esp_timer_get_time() - cycle_start < CYCLE_PERIOD_US) {
             vTaskDelay(pdMS_TO_TICKS(1000));
 
-            received += drain_radio(&radio);
+            esp_task_wdt_reset();
+            if (radio_ok) received += drain_radio(&radio);
             update_oled(received); // also keeps the UPTIME line ticking
         }
     }
