@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
+import 'lobby.dart';
 
 const maxPoints = 90;
 
@@ -16,10 +18,13 @@ bool crossedIntoAlert(NodeStatus? prev, NodeStatus next) =>
 class AppState extends ChangeNotifier {
   late final SharedPreferences _prefs;
   final _notifier = FlutterLocalNotificationsPlugin();
-  late ApiClient _api;
+  ApiClient? _apiClient;
+  ApiClient get _api => _apiClient!;
   Timer? _timer;
 
-  String host = 'jaga-master.local';
+  String? host; // null = not joined to a server yet: show the lobby
+  String siteName = 'JAGA';
+  List<Site> recent = [];
   double warnMm = 700, dangerMm = 900, mountMm = 1000;
 
   List<Node> nodes = [];
@@ -32,11 +37,14 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    host = _prefs.getString('host') ?? host;
+    host = _prefs.getString('host');
+    siteName = _prefs.getString('siteName') ?? siteName;
+    recent = [
+      for (final j in jsonDecode(_prefs.getString('recent') ?? '[]') as List) Site.fromJson(j as Map<String, dynamic>)
+    ];
     warnMm = _prefs.getDouble('warn') ?? warnMm;
     dangerMm = _prefs.getDouble('danger') ?? dangerMm;
     mountMm = _prefs.getDouble('mount') ?? mountMm;
-    _api = ApiClient(host);
 
     await _notifier.initialize(
         settings: const InitializationSettings(
@@ -46,8 +54,51 @@ class AppState extends ChangeNotifier {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
 
+    if (host != null) _start();
+  }
+
+  void _start() {
+    _apiClient = ApiClient(host!);
     poll();
+    _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 10), (_) => poll());
+  }
+
+  void _reset() {
+    nodes = [];
+    history.updateAll((_, _) => []);
+    serverStatus = null;
+    online = false;
+    _historyLoaded = false;
+    _lastStatus.clear();
+  }
+
+  /// Joins [site] after checking it answers. Returns an error message, or null on success.
+  Future<String?> join(Site site) async {
+    try {
+      await ApiClient(site.url).status();
+    } catch (_) {
+      return "Can't reach ${site.name}";
+    }
+    host = site.url;
+    siteName = site.name;
+    recent = [site, ...recent.where((r) => r.url != site.url)].take(5).toList();
+    await _prefs.setString('host', site.url);
+    await _prefs.setString('siteName', site.name);
+    await _prefs.setString('recent', jsonEncode([for (final r in recent) r.toJson()]));
+    _reset();
+    _start();
+    notifyListeners();
+    return null;
+  }
+
+  /// Back to the lobby; keeps the recent list so it doesn't auto-join again.
+  Future<void> leave() async {
+    _timer?.cancel();
+    host = null;
+    await _prefs.remove('host');
+    _reset();
+    notifyListeners();
   }
 
   @override
@@ -56,24 +107,13 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> saveSettings(String newHost, double warn, double danger, double mount) async {
-    final hostChanged = newHost != host;
-    host = newHost;
+  Future<void> saveSettings(double warn, double danger, double mount) async {
     warnMm = warn;
     dangerMm = danger;
     mountMm = mount;
-    await _prefs.setString('host', host);
     await _prefs.setDouble('warn', warn);
     await _prefs.setDouble('danger', danger);
     await _prefs.setDouble('mount', mount);
-    if (hostChanged) {
-      _api = ApiClient(host);
-      nodes = [];
-      history.updateAll((_, _) => []);
-      _historyLoaded = false;
-      _lastStatus.clear();
-      poll();
-    }
     notifyListeners();
   }
 

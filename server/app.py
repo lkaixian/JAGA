@@ -83,12 +83,17 @@ def newest(node, limit):
 
 
 def as_reading(row):
-    return {k: row[k] for k in COLS}
+    return {**{k: row[k] for k in COLS}, "received_at": row["received_at"]}  # server clock, unix seconds
+
+
+def node_ids():
+    with closing(db()) as c:
+        return [r[0] for r in c.execute("SELECT DISTINCT node_id FROM readings ORDER BY node_id")]
 
 
 def check_node(node):
-    if node not in (1, 2, 3):
-        raise HTTPException(400, "node must be 1, 2 or 3")
+    if node < 1:
+        raise HTTPException(400, "node must be 1 or higher")
 
 
 @app.get("/api/status")
@@ -111,6 +116,15 @@ def nodes():
             for n in base]
 
 
+@app.get("/api/site")
+def site():
+    """Name + centre point, so the app can show this server in its lobby."""
+    pts = [(n["lat"], n["lng"]) for n in nodes() if "lat" in n]
+    return {"name": os.environ.get("SITE_NAME", "JAGA"),
+            "lat": sum(p[0] for p in pts) / len(pts) if pts else None,
+            "lng": sum(p[1] for p in pts) / len(pts) if pts else None}
+
+
 class Pos(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
@@ -127,7 +141,7 @@ def set_node_pos(node_id: int, pos: Pos):
 
 @app.get("/api/latest")
 def latest():
-    return [as_reading(r) for n in (1, 2, 3) for r in newest(n, 1)]
+    return [as_reading(r) for n in node_ids() for r in newest(n, 1)]
 
 
 @app.get("/api/history")
@@ -139,7 +153,7 @@ def history(node: int, limit: int = 90):
 @app.get("/api/trend")
 def trend(warn: float = 700, danger: float = 900):
     out = []
-    for n in (1, 2, 3):
+    for n in node_ids():
         rows = newest(n, 200)[::-1]
         out.append({"node_id": n, **analyze([(r["received_at"], r["water_level_mm"]) for r in rows], warn, danger)})
     return out

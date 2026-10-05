@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'lobby.dart';
 import 'map_view.dart';
 import 'state.dart';
 
@@ -55,10 +56,11 @@ class _HomeState extends State<Home> {
     return ListenableBuilder(
       listenable: s,
       builder: (context, _) {
+        if (s.host == null) return LobbyScreen(s);
         final pages = [_StatusTab(s), _HistoryTab(s), _MapTab(s), _SettingsTab(s)];
         return Scaffold(
           appBar: AppBar(
-            title: const Text('JAGA'),
+            title: Text(s.siteName),
             actions: [
               Padding(
                 padding: const EdgeInsets.only(right: 16),
@@ -236,7 +238,6 @@ class _SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<_SettingsTab> {
-  late final host = TextEditingController(text: widget.s.host);
   late final warn = TextEditingController(text: widget.s.warnMm.toStringAsFixed(0));
   late final danger = TextEditingController(text: widget.s.dangerMm.toStringAsFixed(0));
   late final mount = TextEditingController(text: widget.s.mountMm.toStringAsFixed(0));
@@ -252,17 +253,21 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
-        _field('Master host', host,
-            number: false,
-            help: 'jaga-master.local, or the IP the master logs as "Got IP" on its serial console. '
-                'Android often cannot resolve .local names, so use the IP there.'),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.dns),
+            title: Text(widget.s.siteName),
+            subtitle: Text(widget.s.host ?? ''),
+            trailing: TextButton(onPressed: widget.s.leave, child: const Text('Switch server')),
+          ),
+        ),
+        const SizedBox(height: 12),
         _field('Warning at (mm)', warn),
         _field('Danger at (mm)', danger),
         _field('Mount height (mm, chart top)', mount),
         FilledButton(
           onPressed: () {
             widget.s.saveSettings(
-              host.text.trim().isEmpty ? widget.s.host : host.text.trim(),
               double.tryParse(warn.text) ?? widget.s.warnMm,
               double.tryParse(danger.text) ?? widget.s.dangerMm,
               double.tryParse(mount.text) ?? widget.s.mountMm,

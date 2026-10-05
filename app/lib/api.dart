@@ -48,11 +48,11 @@ class Status {
 }
 
 class ApiClient {
-  String host; // "jaga-master.local" or an IP
+  String host; // "192.168.x.x", "jaga-master.local", or a full https:// address
   ApiClient(this.host);
 
   Future<dynamic> _get(String path) async {
-    final res = await http.get(Uri.parse('http://$host$path')).timeout(const Duration(seconds: 5));
+    final res = await http.get(Uri.parse('${host.startsWith('http') ? host : 'http://$host'}$path')).timeout(const Duration(seconds: 5));
     if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
     return jsonDecode(res.body);
   }

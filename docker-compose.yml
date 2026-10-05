@@ -5,6 +5,7 @@ services:
     build: ./server
     environment:
       MASTER_URL: ${MASTER_URL:-http://192.168.1.50}
+      SITE_NAME: ${SITE_NAME:-UTHM Parit Raja}
     volumes:
       - ./data:/data
     restart: unless-stopped
@@ -17,4 +18,14 @@ services:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api
+    restart: unless-stopped
+  # Public HTTPS without opening ports:  TUNNEL_TOKEN=<token> docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    profiles: ["tunnel"]
+    depends_on:
+      - nginx
     restart: unless-stopped

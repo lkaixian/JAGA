@@ -94,4 +94,32 @@ MASTER_URL=http://<master-ip> docker compose up --build   # then open http://loc
 - `server/trend.py` fits the last 30 min per node: rate (mm/min), rising/steady/falling, and time to the
   warning/danger levels. Self-check: `python server/trend.py`.
 - `MASTER_URL` needs the master's IP: containers can't resolve `.local`.
-- The dashboard still works opened straight from disk against the master (the trend table just hides).
+- `dashboard/index.html` is the team's J.A.G.A page (5 nodes `JAGA-01..05` = node ids 1..5), reading this API.
+  Add `?sim` for its simulated storm. Rain, battery and RSSI show a dash: no such sensors yet.
+  Its drain graphic assumes the sensor is 1.45 m above the floor, so set `SONAR_MOUNT_HEIGHT_MM` to 1450 in `node_config.h`.
+- `dashboard/classic.html` is the earlier dashboard (settings dialog, trend table).
+
+### Public HTTPS via Cloudflare Tunnel (optional)
+
+Lets the dashboard and the phone app reach the server from anywhere over HTTPS, with no port forwarding.
+Only nginx is exposed; the master stays on your LAN and only the Python container talks to it.
+
+1. Domain on Cloudflare DNS (e.g. `larmkx.com`). Zero Trust > Networks > Tunnels > Create tunnel > Cloudflared.
+2. Copy the token. Add a public hostname, e.g. `jaga.larmkx.com`, service `http://nginx:80`.
+3. `TUNNEL_TOKEN=<token> docker compose --profile tunnel up -d`, then open `https://jaga.larmkx.com`.
+4. In the Flutter app settings enter `https://jaga.larmkx.com`.
+
+Writes (moving a pin) are rejected for tunnel traffic; reads are public. To require a login for reads too, add a
+Cloudflare Access policy (email one-time PIN) on that hostname. Moving pins works from `http://localhost:8088` on the LAN.
+
+## App: server lobby
+
+Readings are public, so the Flutter app has no login. It works like a game lobby:
+
+- First launch with nothing saved: asks for location once, reads the directory (`dashboard/servers.json`, served at
+  `<your domain>/servers.json`, URL set as `directoryUrl` in `app/lib/lobby.dart`), and auto-joins the nearest server
+  within 50 km. Denied GPS or nothing close: shows the list instead.
+- Lobby list: name, distance, live/offline dot; or "Join by address" for anything not listed (LAN IP, `.local`, a domain).
+- Joined servers are remembered (last 5); Settings > Switch server returns to the lobby, and it won't auto-join again.
+- To list a new deployment: add `{name, url, lat, lng}` to `servers.json`. Each server also reports its own centre at
+  `GET /api/site` (name from the `SITE_NAME` env var).
