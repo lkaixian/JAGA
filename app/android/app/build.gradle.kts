@@ -9,6 +9,11 @@ android {
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
+    packaging {
+        // 64-bit ARM only: drop other-CPU libs that dependencies bundle
+        jniLibs { excludes += setOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**") }
+    }
+
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
@@ -24,6 +29,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk { abiFilters += "arm64-v8a" } // 64-bit ARM phones only
     }
 
     buildTypes {
