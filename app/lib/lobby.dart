@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
-import 'api.dart';
 import 'main.dart' show ThemeToggle;
 import 'state.dart';
 
@@ -16,10 +15,118 @@ const autoJoinMaxKm = 50.0;
 class Site {
   final String name, url;
   final double? lat, lng;
-  Site(this.name, this.url, [this.lat, this.lng]);
-  factory Site.fromJson(Map<String, dynamic> j) =>
-      Site(j['name'], (j['url'] as String).replaceAll(RegExp(r'/+$'), ''), (j['lat'] as num?)?.toDouble(), (j['lng'] as num?)?.toDouble());
-  Map<String, dynamic> toJson() => {'name': name, 'url': url, 'lat': lat, 'lng': lng};
+  final String? logo; // path on the server or a full URL
+  Site(this.name, this.url, [this.lat, this.lng, this.logo]);
+  factory Site.fromJson(Map<String, dynamic> j) => Site(j['name'], (j['url'] as String).replaceAll(RegExp(r'/+$'), ''),
+      (j['lat'] as num?)?.toDouble(), (j['lng'] as num?)?.toDouble(), j['logo'] as String?);
+  Map<String, dynamic> toJson() => {'name': name, 'url': url, 'lat': lat, 'lng': lng, 'logo': logo};
+}
+
+/// Relative logo path joined to the server url; full URLs kept.
+String? resolveLogo(String serverUrl, String? logo) {
+  if (logo == null || logo.isEmpty) return null;
+  if (RegExp(r'^https?://').hasMatch(logo)) return logo;
+  return '$serverUrl${logo.startsWith('/') ? '' : '/'}$logo';
+}
+
+/// The server's own name, logo and centre; just the host name when it doesn't answer.
+Future<Site> fetchSite(String url) async {
+  try {
+    final res = await http.get(Uri.parse('$url/api/site')).timeout(const Duration(seconds: 5));
+    if (res.statusCode != 200) throw const FormatException('not a site');
+    final j = jsonDecode(res.body) as Map<String, dynamic>;
+    return Site(j['name'] as String, url, (j['lat'] as num?)?.toDouble(), (j['lng'] as num?)?.toDouble(), j['logo'] as String?);
+  } catch (_) {
+    return Site(Uri.parse(url).host, url);
+  }
+}
+
+/// Round trip to /api/health in ms; any HTTP answer counts. Null when nothing answers in 3 s.
+Future<int?> pingMs(String url) async {
+  final sw = Stopwatch()..start();
+  try {
+    await http.get(Uri.parse('$url/api/health')).timeout(const Duration(seconds: 3));
+    return sw.elapsedMilliseconds;
+  } catch (_) {
+    return null;
+  }
+}
+
+enum PingTone { good, ok, slow, offline }
+
+PingTone pingTone(int? ms) => ms == null ? PingTone.offline : ms < 100 ? PingTone.good : ms < 300 ? PingTone.ok : PingTone.slow;
+String pingLabel(int? ms) => ms == null ? 'offline' : '$ms ms';
+
+String _bare(String url) => url.replaceFirst(RegExp(r'^https?://'), '');
+String _km1(double km) => km < 10 ? km.toStringAsFixed(1) : km.toStringAsFixed(0);
+
+/// Ping chip; [loading] shows "…" until the answer arrives.
+class PingChip extends StatelessWidget {
+  final int? ms;
+  final bool loading;
+  const PingChip(this.ms, {super.key, this.loading = false});
+  @override
+  Widget build(BuildContext context) {
+    final c = loading
+        ? Colors.grey
+        : switch (pingTone(ms)) {
+            PingTone.good => Colors.green,
+            PingTone.ok => Colors.amber.shade800,
+            _ => Colors.red,
+          };
+    return Chip(
+      visualDensity: VisualDensity.compact,
+      side: BorderSide(color: c),
+      label: Text(loading ? '…' : pingLabel(ms), style: TextStyle(color: c, fontSize: 12)),
+    );
+  }
+}
+
+/// Server logo, or the first letter of its name when there is none or it won't load.
+class SiteAvatar extends StatelessWidget {
+  final Site site;
+  final double size;
+  const SiteAvatar(this.site, {super.key, this.size = 40});
+  @override
+  Widget build(BuildContext context) {
+    final fallback = CircleAvatar(radius: size / 2, child: Text(site.name.isEmpty ? '?' : site.name[0].toUpperCase()));
+    final url = resolveLogo(site.url, site.logo);
+    if (url == null) return fallback;
+    return ClipOval(
+      child: Image.network(url,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => fallback,
+          loadingBuilder: (_, child, p) => p == null ? child : fallback),
+    );
+  }
+}
+
+/// The one question before joining any server.
+Future<bool> confirmJoin(BuildContext context, Site site, {double? km, int? ping}) async {
+  final loc = site.lat == null || site.lng == null
+      ? 'Location not listed'
+      : '${site.lat!.abs().toStringAsFixed(4)}°${site.lat! >= 0 ? 'N' : 'S'}, '
+          '${site.lng!.abs().toStringAsFixed(4)}°${site.lng! >= 0 ? 'E' : 'W'}${km == null ? '' : ' · ${_km1(km)} km away'}';
+  return await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: Row(children: [SiteAvatar(site), const SizedBox(width: 12), Expanded(child: Text(site.name))]),
+          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(_bare(site.url)),
+            const SizedBox(height: 4),
+            Text(loc),
+            const SizedBox(height: 8),
+            PingChip(ping),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Join')),
+          ],
+        ),
+      ) ??
+      false;
 }
 
 /// Great-circle distance (haversine), km.
@@ -98,7 +205,8 @@ class LobbyScreen extends StatefulWidget {
 
 class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   List<Site> sites = [];
-  final Map<String, bool> online = {}; // site url -> answered /api/status
+  final Map<String, int?> pings = {}; // site url -> ping ms (null = offline); absent = still asking
+  final Set<String> _declined = {}; // not asked again this session
   Position? pos;
   LocFail? locFail;
   String note = 'Finding servers near you…';
@@ -168,9 +276,16 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     if (auto && pos != null) {
       final near = nearestSite(sites, pos!.latitude, pos!.longitude);
-      if (near != null) {
-        setState(() => note = 'Joining ${near.name}…');
-        if (await widget.s.join(near) == null) return;
+      if (near != null && !_declined.contains(near.url)) {
+        setState(() => note = 'Checking ${near.name}…');
+        final ping = await pingMs(near.url);
+        if (!mounted) return;
+        if (await confirmJoin(context, near, km: _km(near), ping: ping)) {
+          setState(() => note = 'Joining ${near.name}…');
+          if (await widget.s.join(near) == null) return;
+        } else {
+          _declined.add(near.url);
+        }
       }
     }
     setState(() {
@@ -178,8 +293,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       note = pos == null ? 'Pick a server.' : 'Servers near you';
     });
     for (final site in sites) {
-      ApiClient(site.url).status().then((_) => true, onError: (_) => false).then((ok) {
-        if (mounted) setState(() => online[site.url] = ok);
+      pingMs(site.url).then((ms) {
+        if (mounted) setState(() => pings[site.url] = ms);
       });
     }
   }
@@ -189,6 +304,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       busy = true;
       error = null;
     });
+    final ping = pings.containsKey(site.url) ? pings[site.url] : await pingMs(site.url);
+    if (!mounted) return;
+    if (!await confirmJoin(context, site, km: _km(site), ping: ping)) {
+      if (mounted) setState(() => busy = false);
+      return;
+    }
     final err = await widget.s.join(site);
     if (err != null && mounted) {
       setState(() {
@@ -196,6 +317,15 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
         error = err;
       });
     }
+  }
+
+  Future<void> _joinAddress(String u) async {
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    final site = await fetchSite(u);
+    if (mounted) await _join(site);
   }
 
   @override
@@ -235,7 +365,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
               ? null
               : () {
                   final u = normalizeUrl(address.text);
-                  if (address.text.trim().isNotEmpty) _join(Site(Uri.parse(u).host, u));
+                  if (address.text.trim().isNotEmpty) _joinAddress(u);
                 },
           child: const Text('Join'),
         ),
@@ -244,16 +374,13 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   }
 
   Widget _tile(Site site) {
-    final km = _km(site), ok = online[site.url];
+    final km = _km(site);
     return Card(
       child: ListTile(
-        leading: Icon(Icons.circle, size: 14, color: ok == null ? Colors.grey : (ok ? Colors.green : Colors.red)),
+        leading: SiteAvatar(site),
         title: Text(site.name),
-        subtitle: Text([
-          if (km != null) '${km < 10 ? km.toStringAsFixed(1) : km.toStringAsFixed(0)} km away',
-          site.url.replaceFirst(RegExp(r'^https?://'), ''),
-        ].join(' · ')),
-        trailing: const Icon(Icons.chevron_right),
+        subtitle: Text(_bare(site.url) + (km == null ? '' : ' · ${_km1(km)} km')),
+        trailing: PingChip(pings[site.url], loading: !pings.containsKey(site.url)),
         onTap: busy ? null : () => _join(site),
       ),
     );

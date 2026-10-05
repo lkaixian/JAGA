@@ -93,7 +93,7 @@ class _HomeState extends State<Home> {
                 child: Center(
                   child: Text(
                     live
-                        ? 'Live · ${_hms(s.lastOk!)}'
+                        ? 'Live · ${_hms(s.lastOk!)}${s.pingMs == null ? '' : ' · ${pingLabel(s.pingMs)}'}'
                         : 'Offline${s.lastOk == null ? '' : ' · last ${_hms(s.lastOk!)}'}',
                     style: TextStyle(color: live ? _statusColors[NodeStatus.normal] : _statusColors[NodeStatus.alert]),
                   ),
@@ -278,6 +278,19 @@ class _HistoryTab extends StatelessWidget {
   }
 }
 
+/// "Level 0.82 m · Normal" style line for the map pin sheet.
+String _nodeInfo(AppState s, int id) {
+  final r = s.latestOf(id);
+  if (r == null) return 'No data yet';
+  final h = nodeHealth(r, DateTime.now().millisecondsSinceEpoch / 1000);
+  final health = switch (h) {
+    NodeHealth.noSignal => 'No signal',
+    NodeHealth.fault => 'Sensor fault',
+    _ => _statusLabels[r.status(s.warnMm, s.dangerMm)]!,
+  };
+  return '${r.sonarOk ? 'Level ${(r.levelMm / 1000).toStringAsFixed(2)} m' : 'Level unknown'} · $health';
+}
+
 class _MapTab extends StatelessWidget {
   final AppState s;
   const _MapTab(this.s);
@@ -285,10 +298,17 @@ class _MapTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.all(12),
-        child: MapView(nodes: s.nodes, colors: {
-          for (final id in s.history.keys)
-            id: _statusColors[s.latestOf(id)?.status(s.warnMm, s.dangerMm)] ?? Colors.grey,
-        }),
+        child: MapView(
+          nodes: s.nodes,
+          colors: {
+            for (final id in s.history.keys)
+              id: _statusColors[s.latestOf(id)?.status(s.warnMm, s.dangerMm)] ?? Colors.grey,
+          },
+          info: {
+            for (final id in s.history.keys) id: _nodeInfo(s, id),
+          },
+          fallback: s.siteCentre,
+        ),
       );
 }
 

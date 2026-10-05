@@ -45,6 +45,7 @@ void main() {
   lobbyTests();
   errorTests();
   fixTests();
+  pingTests();
 }
 
 void fixTests() {
@@ -147,5 +148,20 @@ void lobbyTests() {
     expect(normalizeUrl('jaga-master.local/'), 'http://jaga-master.local');
     expect(normalizeUrl('localhost:8088'), 'http://localhost:8088');
     expect(normalizeUrl('https://x.example/'), 'https://x.example');
+  });
+}
+
+void pingTests() {
+  test('resolveLogo, ping label and tone, Site.fromJson logo', () {
+    expect(resolveLogo('https://a.example', '/logo.png'), 'https://a.example/logo.png');
+    expect(resolveLogo('https://a.example', 'logo.png'), 'https://a.example/logo.png');
+    expect(resolveLogo('https://a.example', 'https://cdn.example/x.png'), 'https://cdn.example/x.png');
+    expect(resolveLogo('https://a.example', null), isNull);
+    expect(pingLabel(42), '42 ms');
+    expect(pingLabel(null), 'offline');
+    expect([99, 100, 299, 300, null].map(pingTone), [PingTone.good, PingTone.ok, PingTone.ok, PingTone.slow, PingTone.offline]);
+    final s = Site.fromJson({'name': 'A', 'url': 'https://a.example/', 'lat': 1, 'lng': 2, 'logo': '/logo.png'});
+    expect((s.url, s.logo, s.lat), ('https://a.example', '/logo.png', 1.0));
+    expect(Site.fromJson({'name': 'B', 'url': 'https://b.example'}).logo, isNull);
   });
 }

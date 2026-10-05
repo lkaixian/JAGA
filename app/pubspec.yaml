@@ -39,6 +39,8 @@ dependencies:
   fl_chart: ^1.2.0
   flutter_local_notifications: ^22.3.1
   geolocator: ^14.1.1
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:
@@ -61,6 +63,8 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  assets:
+    - assets/rivers.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

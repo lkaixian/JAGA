@@ -1,69 +1,121 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import 'api.dart';
 
-/// Schematic (not geographic) map: node pins projected from lat/lng. Draws
-/// offline, unlike a tile map.
-class MapView extends StatelessWidget {
+/// OpenStreetMap with a pin per node and the river lines (assets/rivers.json).
+class MapView extends StatefulWidget {
   final List<Node> nodes;
   final Map<int, Color> colors; // node id -> status ring color
-  const MapView({super.key, required this.nodes, required this.colors});
+  final Map<int, String> info; // node id -> "Level 0.82 m · Normal"
+  final (double, double)? fallback; // server centre, used when no node has coordinates
+  const MapView({super.key, required this.nodes, required this.colors, this.info = const {}, this.fallback});
 
   @override
-  Widget build(BuildContext context) => CustomPaint(
-        size: Size.infinite,
-        painter: _MapPainter(nodes, colors, Theme.of(context)),
-      );
+  State<MapView> createState() => _MapViewState();
 }
 
-class _MapPainter extends CustomPainter {
-  final List<Node> nodes;
-  final Map<int, Color> colors;
-  final ThemeData theme;
-  _MapPainter(List<Node> all, this.colors, this.theme) : nodes = all.where((n) => n.lat.isFinite && n.lng.isFinite).toList();
+class _MapViewState extends State<MapView> {
+  List<Polyline> rivers = [];
+  bool tileError = false;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    if (nodes.isEmpty) return;
-    const pad = 48.0;
-    double lo(Iterable<double> v) => v.reduce((a, b) => a < b ? a : b);
-    double hi(Iterable<double> v) => v.reduce((a, b) => a > b ? a : b);
-    final lats = nodes.map((n) => n.lat), lngs = nodes.map((n) => n.lng);
-    final latSpan = (hi(lats) - lo(lats)).clamp(1e-4, 1.0), lngSpan = (hi(lngs) - lo(lngs)).clamp(1e-4, 1.0);
-    Offset at(Node n) => Offset(
-          pad + (n.lng - lo(lngs)) / lngSpan * (size.width - 2 * pad),
-          pad + (1 - (n.lat - lo(lats)) / latSpan) * (size.height - 2 * pad),
-        );
-
-    final pts = nodes.map(at).toList();
-    final river = Path()..moveTo(pts.first.dx, pts.first.dy);
-    for (final p in pts.skip(1)) {
-      river.lineTo(p.dx, p.dy);
-    }
-    canvas.drawPath(
-        river,
-        Paint()
-          ..color = theme.colorScheme.primary.withValues(alpha: 0.4)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 8
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round);
-
-    for (var i = 0; i < nodes.length; i++) {
-      final n = nodes[i], p = pts[i];
-      canvas.drawCircle(p, 11, Paint()..color = colors[n.id] ?? Colors.grey);
-      canvas.drawCircle(p, 5, Paint()..color = theme.colorScheme.surface);
-      final tp = TextPainter(
-        text: TextSpan(
-            text: '${n.name}\n${n.lat.toStringAsFixed(4)}, ${n.lng.toStringAsFixed(4)}',
-            style: TextStyle(color: theme.colorScheme.onSurface, fontSize: 11)),
-        textDirection: TextDirection.ltr,
-      )..layout(maxWidth: 150);
-      final x = (p.dx + 16 + tp.width > size.width) ? p.dx - 16 - tp.width : p.dx + 16;
-      tp.paint(canvas, Offset(x, p.dy - tp.height / 2));
-    }
+  void initState() {
+    super.initState();
+    rootBundle.loadString('assets/rivers.json').then((t) {
+      if (!mounted) return;
+      setState(() => rivers = [
+            for (final r in jsonDecode(t) as List)
+              Polyline(
+                points: [for (final p in r['p'] as List) LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble())],
+                color: const Color(0xFF0B5CD5).withValues(alpha: 0.85),
+                strokeWidth: 4,
+              ),
+          ]);
+    });
   }
 
+  void _sheet(Node n) => showModalBottomSheet<void>(
+        context: context,
+        builder: (_) => ListTile(
+          leading: CircleAvatar(backgroundColor: widget.colors[n.id] ?? Colors.grey, child: Text('${n.id}')),
+          title: Text(n.name),
+          subtitle: Text(widget.info[n.id] ?? 'No data yet'),
+        ),
+      );
+
   @override
-  bool shouldRepaint(_MapPainter old) => true;
+  Widget build(BuildContext context) {
+    final placed = widget.nodes.where((n) => n.lat.isFinite && n.lng.isFinite).toList();
+    final pts = [for (final n in placed) LatLng(n.lat, n.lng)];
+    final fb = widget.fallback;
+    final options = MapOptions(
+      initialCenter: pts.length == 1 ? pts.first : (fb == null ? const LatLng(1.865, 103.086) : LatLng(fb.$1, fb.$2)),
+      initialZoom: pts.length == 1 ? 16 : 15,
+      initialCameraFit: pts.length > 1
+          ? CameraFit.bounds(bounds: LatLngBounds.fromPoints(pts), padding: const EdgeInsets.all(40), maxZoom: 17)
+          : null,
+    );
+    return Column(children: [
+      Expanded(
+        child: Stack(children: [
+          FlutterMap(
+            key: ValueKey(pts.length), // nodes arrive after the first poll: rebuild to refit
+            options: options,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'my.jaga.jaga_app',
+                errorTileCallback: (tile, error, stack) {
+                  if (tileError) return;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) setState(() => tileError = true);
+                  });
+                },
+              ),
+              PolylineLayer(polylines: rivers),
+              MarkerLayer(markers: [
+                for (final n in placed)
+                  Marker(
+                    point: LatLng(n.lat, n.lng),
+                    width: 28,
+                    height: 28,
+                    child: GestureDetector(
+                      onTap: () => _sheet(n),
+                      child: Container(
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFF263238),
+                          border: Border.all(color: widget.colors[n.id] ?? Colors.grey, width: 4),
+                        ),
+                        child: Text('${n.id}', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ),
+              ]),
+            ],
+          ),
+          Positioned(
+            right: 0,
+            bottom: 0,
+            child: Container(
+              color: Colors.white70,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              child: const Text('© OpenStreetMap contributors', style: TextStyle(fontSize: 10, color: Colors.black87)),
+            ),
+          ),
+        ]),
+      ),
+      if (tileError)
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text("Map tiles couldn't load. Pins still show where the nodes are."),
+        ),
+    ]);
+  }
 }

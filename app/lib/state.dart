@@ -37,6 +37,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final Map<int, List<Reading>> history = {}; // node id (ascending) -> readings, oldest first
   Status? serverStatus;
   DateTime? lastOk;
+  int? pingMs; // duration of the last /api/status request; null when the poll failed
   LinkState link = LinkState.connected;
   int _fails = 0;
   bool _paused = false;
@@ -47,6 +48,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   ThemeMode themeMode = ThemeMode.system;
 
   bool get serverTooNew => (serverStatus?.apiVersion ?? 1) > supportedApiVersion;
+  /// Centre of the joined server, for an empty map.
+  (double, double)? get siteCentre {
+    final r = recent.where((r) => r.url == host).firstOrNull;
+    return r?.lat == null || r?.lng == null ? null : (r!.lat!, r.lng!);
+  }
+
   String? get cachedDirectory => _prefs.getString('directory');
   Future<void> saveDirectory(String json) => _prefs.setString('directory', json);
 
@@ -209,7 +216,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         history[id] = await _api.history(id);
         _historyLoaded.add(id);
       }
+      final sw = Stopwatch()..start();
       serverStatus = await _api.status();
+      pingMs = sw.elapsedMilliseconds;
       for (final r in latest) {
         final list = history[r.nodeId];
         if (list == null || (list.isNotEmpty && !isNewReading(list.last, r))) continue;
@@ -223,6 +232,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('poll failed (${e is TypeError || e is FormatException ? 'bad reply' : 'network'}): $e');
       _fails++;
+      pingMs = null;
       link = LinkState.serverDown; // keep the last data on screen
     }
     notifyListeners();
