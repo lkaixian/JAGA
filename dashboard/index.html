@@ -149,6 +149,12 @@ td.num{font-family:var(--font-mono)}
 .chip.watch{color:#9FD8FF;border-color:rgba(159,216,255,.4);background:rgba(159,216,255,.08)}
 .chip.warning{color:var(--amber);border-color:rgba(255,176,32,.4);background:rgba(255,176,32,.08)}
 .chip.danger{color:var(--siren);border-color:rgba(255,90,71,.45);background:rgba(255,90,71,.10)}
+.chip.fault,.chip.stale,.chip.nodata{color:var(--mist);border-color:rgba(127,166,198,.4);background:rgba(127,166,198,.08)}
+.chip.fault{border-style:dashed}
+.chip.nodata{opacity:.7}
+tr.stale{opacity:.5}
+.tiles.stale{opacity:.5}
+.readout .note{font-size:11.5px;color:var(--mist);margin-top:6px}
 
 /* ---------- node map ---------- */
 #map{height:340px;border-radius:4px;border:1px solid var(--rule);background:var(--hull);color:var(--mist);font-size:13px}
@@ -241,6 +247,7 @@ td.num{font-family:var(--font-mono)}
       <div class="readout">
         <div>
           <span class="big" id="levelBig">0.00</span><span class="unit">m</span>
+          <div class="note" id="levelNote"></div>
         </div>
         <div class="where">
           <b id="nodeName">—</b>
@@ -252,7 +259,7 @@ td.num{font-family:var(--font-mono)}
     <!-- stat tiles -->
     <section class="card">
       <h2>Station telemetry</h2>
-      <div class="tiles">
+      <div class="tiles" id="tiles">
         <div class="tile">
           <div class="k">Rate of rise</div>
           <div class="v" id="rateV">0.00 <small>m/h</small></div>
@@ -411,6 +418,8 @@ async function fetchApi(){
   if(results.every(r => r.status === 'rejected')) throw results[0].reason;
   NODES.forEach((n, i) => {
     const rows = results[i].status === 'fulfilled' ? results[i].value : [];
+    // newest raw row decides live / fault / no signal; older valid points still feed chart and rate
+    meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s } : null;
     store[n.id] = rows.slice().reverse()
       .filter(r => r.water_level_mm !== SONAR_ERR)
       .map(r => ({
@@ -427,6 +436,7 @@ async function fetchApi(){
    ========================================================================= */
 let simMin = 0;                       // simulated minutes elapsed
 const store = {};                     // id -> [{t, level, rain, batt, rssi, snr}]
+const meta = {};                      // id -> newest raw row {fault, rx} (api mode), null = no rows
 NODES.forEach(n => store[n.id] = []);
 
 function stormCurve(t, seed){
@@ -496,6 +506,25 @@ function severity(level, rate){
   if(rate > 0 && level + rate >= CFG.thrDanger) s = Math.max(s, 2);
   return s;
 }
+
+const STALE_S = 180;                 // section 7 of docs/ERROR_HANDLING.md
+
+// One place that decides live | fault | nosignal | nodata. sev is -1 when there is no trustworthy level.
+function nodeInfo(n){
+  const buf = store[n.id], m = meta[n.id], p = buf[buf.length-1];
+  let st = 'live', age = 0;
+  if(SOURCE.mode === 'api'){
+    if(!m) st = 'nodata';
+    else {
+      age = Date.now()/1000 - m.rx;
+      st = age >= STALE_S ? 'nosignal' : m.fault ? 'fault' : 'live';   // an old fault is just silence
+    }
+  } else if(!p) st = 'nodata';
+  const rate = rateOfRise(buf);
+  const sev = (st === 'live' || st === 'nosignal') && p ? severity(p.level, rate) : -1;
+  return { st, p, rate, sev, mins: Math.round(age/60) };
+}
+const CHIP = { fault:['fault','Sensor fault'], nosignal:['stale','No signal'], nodata:['nodata','No data'] };
 
 const SEV = ['normal','watch','warning','danger'];
 const SEVLABEL = ['Normal','Watch','Warning','Danger'];
@@ -596,21 +625,19 @@ function drawChart(buf){
 function drawTable(){
   let html = '';
   NODES.forEach(n => {
-    const buf = store[n.id];
-    if(!buf.length) return;
-    const p = buf[buf.length-1];
-    const rate = rateOfRise(buf);
-    const sev = severity(p.level, rate);
+    const { st, p, rate, sev } = nodeInfo(n);
+    const [cc, ct] = st === 'live' ? [SEV[sev], SEVLABEL[sev]] : CHIP[st];
+    const has = sev >= 0;
     html += `
-      <tr data-id="${n.id}" class="${n.id===activeId?'active':''}">
+      <tr data-id="${n.id}" class="${n.id===activeId?'active':''} ${st==='nosignal'?'stale':''}">
         <td><span class="node-id">${n.id}</span></td>
         <td><span class="node-name">${n.name}</span></td>
-        <td class="num">${p.level.toFixed(2)} m</td>
-        <td class="num" style="color:${rate>=CFG.rateWarning?'var(--siren)':rate>=CFG.rateWatch?'var(--amber)':'inherit'}">${rate>=0?'+':''}${rate.toFixed(2)}</td>
-        <td class="num hide-sm">${p.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
-        <td class="num hide-sm">${p.batt == null ? '—' : p.batt.toFixed(2) + ' V'}</td>
-        <td class="num hide-sm">${p.rssi == null ? '—' : p.rssi + ' dBm'}</td>
-        <td><span class="chip ${SEV[sev]}">${SEVLABEL[sev]}</span></td>
+        <td class="num">${has ? p.level.toFixed(2) + ' m' : '—'}</td>
+        <td class="num" style="color:${rate>=CFG.rateWarning?'var(--siren)':rate>=CFG.rateWatch?'var(--amber)':'inherit'}">${has ? (rate>=0?'+':'') + rate.toFixed(2) : '—'}</td>
+        <td class="num hide-sm">${p?.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
+        <td class="num hide-sm">${p?.batt == null ? '—' : p.batt.toFixed(2) + ' V'}</td>
+        <td class="num hide-sm">${p?.rssi == null ? '—' : p.rssi + ' dBm'}</td>
+        <td><span class="chip ${cc}">${ct}</span></td>
       </tr>`;
   });
   $('nodeRows').innerHTML = html;
@@ -622,48 +649,55 @@ function drawTable(){
 function drawBanner(){
   let worst = -1, worstNode = null;
   NODES.forEach(n => {
-    const buf = store[n.id];
-    if(!buf.length) return;
-    const p = buf[buf.length-1];
-    const s = severity(p.level, rateOfRise(buf));
-    if(s > worst){ worst = s; worstNode = {n, p, rate:rateOfRise(buf)}; }
+    const i = nodeInfo(n);
+    if(i.sev > worst){ worst = i.sev; worstNode = { n, ...i }; }
   });
 
   const b = $('banner');
-  if(worst < 2 || !worstNode){ b.className = 'banner'; return; }
+  const lost = worstNode?.st === 'nosignal';
+  if(worst < 2 && !(worst === 1 && lost)){ b.className = 'banner'; return; }
 
   const minsToDanger = worstNode.rate > 0
     ? Math.round(((CFG.thrDanger - worstNode.p.level) / worstNode.rate) * 60)
     : null;
 
   b.className = 'banner on ' + (worst===3 ? 'danger' : 'warning');
-  $('bannerTag').textContent = worst===3 ? 'Danger' : 'Warning';
-  $('bannerMsg').innerHTML = worst===3
+  $('bannerTag').textContent = SEVLABEL[worst];
+  let msg = worst===3
     ? `<em>${worstNode.n.id}</em> at ${worstNode.n.name} has breached the danger threshold — level <em>${worstNode.p.level.toFixed(2)} m</em>. Alert pushed to residents and the district operations room.`
-    : `<em>${worstNode.n.id}</em> at ${worstNode.n.name} is rising at <em>${worstNode.rate.toFixed(2)} m/h</em>`
+    : worst===2
+    ? `<em>${worstNode.n.id}</em> at ${worstNode.n.name} is rising at <em>${worstNode.rate.toFixed(2)} m/h</em>`
       + (minsToDanger !== null && minsToDanger <= 120
           ? ` — projected to reach danger level in <em>${minsToDanger} min</em>.`
-          : `.`);
+          : `.`)
+    : '';
+  if(lost) msg += (msg ? '<br>' : '') + `<em>${worstNode.n.id}</em> hasn't reported for ${worstNode.mins} min. Last level <em>${worstNode.p.level.toFixed(2)} m</em>.`;
+  $('bannerMsg').innerHTML = msg;
 }
 
 function render(){
   const n = NODES.find(x => x.id === activeId);
   const buf = store[n.id];
-  if(!buf.length){ drawTable(); drawBanner(); drawMap(); return; }
-  const p = buf[buf.length-1];
-  const rate = rateOfRise(buf);
-  const fc = forecast(p.level, rate);
-  const sev = severity(p.level, rate);
-
-  drawDrain(p.level);
-  drawChart(buf);
+  const { st, p, rate, sev, mins } = nodeInfo(n);
   drawTable();
   drawBanner();
-
-  $('levelBig').textContent = p.level.toFixed(2);
-  $('levelBig').style.color = ['var(--signal)','var(--paper)','var(--amber)','var(--siren)'][sev];
   $('nodeName').textContent = n.name;
   $('nodeMeta').textContent = n.id + ' · ' + n.area;
+  $('tiles').classList.toggle('stale', st !== 'live');
+  $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? 'Sensor fault' : st === 'nodata' ? 'No data yet' : '';
+  if(!p || st === 'fault'){      // never draw an old level as current
+    ['waterLine','waterBody'].forEach(i => $(i).setAttribute('d', ''));
+    $('beamLabel').textContent = '— m';
+    $('levelBig').textContent = '—';
+    $('levelBig').style.color = 'var(--mist)';
+  } else {
+    drawDrain(p.level);
+    $('levelBig').textContent = p.level.toFixed(2);
+    $('levelBig').style.color = ['var(--signal)','var(--paper)','var(--amber)','var(--siren)'][sev];
+  }
+  if(!p){ $('chart').innerHTML = ''; drawMap(); return; }
+  drawChart(buf);
+  const fc = forecast(p.level, rate);
 
   $('rateV').className = 'v ' + (rate>=CFG.rateWarning?'bad':rate>=CFG.rateWatch?'warn':'good');
   $('rateV').innerHTML = `${rate>=0?'+':''}${rate.toFixed(2)} <small>m/h</small>`;
@@ -689,9 +723,9 @@ function render(){
 
   if(SOURCE.mode === 'simulate'){
     $('seenV').innerHTML = `${(Date.now()/1000|0) % 60} <small>s ago</small>`;
-  } else if(p.rx){
+  } else if(meta[n.id]?.rx){
     // ponytail: browser clock vs server clock; fine on one machine, skews if they differ
-    const age = Math.max(0, Math.round(Date.now()/1000 - p.rx));
+    const age = Math.max(0, Math.round(Date.now()/1000 - meta[n.id].rx));
     $('seenV').innerHTML = age < 120 ? `${age} <small>s ago</small>` : `${Math.round(age/60)} <small>min ago</small>`;
   } else {
     $('seenV').innerHTML = '—';
@@ -741,7 +775,7 @@ $('modeLabel').textContent = SOURCE.mode === 'simulate' ? 'Simulated feed' : 'Co
    ========================================================================= */
 let leafMap = null, fitKey = '';
 const pins = {};
-const SEVCOLOR = ['#2FE3BE','#9FD8FF','#FFB020','#FF5A47'];
+const SEVCOLOR = ['#2FE3BE','#9FD8FF','#FFB020','#FF5A47','#7FA6C6'];
 const posKey = () => NODES.map(n => n.lat + ',' + n.lng).join(';');
 
 function pinIcon(n, sev){
@@ -774,8 +808,7 @@ function drawMap(){
       L.polyline(w.p, { color:'#0b5cd5', weight:5, opacity:.85 }).bindTooltip(w.n || w.w).addTo(leafMap));
   }
   NODES.forEach(n => {
-    const buf = store[n.id];
-    const sev = buf.length ? severity(buf[buf.length-1].level, rateOfRise(buf)) : 0;
+    const i = nodeInfo(n), sev = i.st === 'live' ? i.sev : 4;     // 4 = grey ring
     const key = sev + n.id + (n.id === activeId);
     let pin = pins[n.id];
     if(!pin){
