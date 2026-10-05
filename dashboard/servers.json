@@ -1,3 +1,3 @@
 [
-  { "name": "UTHM Parit Raja", "url": "https://jaga.larmkx.com", "lat": 1.8650, "lng": 103.0860, "logo": "/uthm.png" }
+  { "name": "UTHM Parit Raja", "slug": "uthm-batu-pahat", "url": "https://jaga.larmkx.com/server/uthm-batu-pahat", "lat": 1.8650, "lng": 103.0860, "logo": "https://jaga.larmkx.com/uthm.png" }
 ]

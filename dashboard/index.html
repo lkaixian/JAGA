@@ -50,6 +50,22 @@ h2{font-size:30px;letter-spacing:.03em;margin-bottom:16px}
 .btn.secondary{color:var(--signal);background:transparent}
 .btn.secondary:hover{background:rgba(47,227,190,.12)}
 .note{font-size:14px;color:var(--mist);margin:10px 0 0}
+.bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;margin-top:8px}
+.bar .txt{margin:0;color:var(--paper)}
+.bar .who{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.bar .who a{font-weight:600;overflow-wrap:anywhere}
+.bar .logo,.bar .avatar{display:flex;width:28px;height:28px;border-radius:50%;object-fit:contain;background:var(--paper)}
+.bar .avatar{align-items:center;justify-content:center;font:700 15px var(--font-display);color:var(--abyss);background:var(--mist)}
+.bar .muted{font-size:14px;color:var(--mist)}
+.bar .chip{min-width:0;font-size:12px}
+.bar .pick{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.bar label{font-size:14px;color:var(--mist)}
+.bar select,.bar button{font:inherit;font-size:14px;color:var(--paper);background:var(--hull);border:1px solid var(--rule);border-radius:6px;padding:5px 10px;min-height:36px;max-width:100%}
+.bar button{font-weight:600;color:var(--signal);border-color:var(--signal);cursor:pointer}
+.bar select:focus-visible,.bar button:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+.bar[hidden],.bar [hidden]{display:none}
+#srvMsg{margin:6px 0 0}
+#srvMsg:empty{display:none}
 .strip{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:14px 16px;min-height:132px;margin:8px 0 8px}
 .strip dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px 20px;margin:0}
 .strip dt{font:600 12px var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--mist)}
@@ -108,6 +124,12 @@ footer a{color:var(--signal)}
       <p class="note">The demo uses made-up data.</p>
     </div>
 
+    <div class="bar">
+      <p class="txt" id="srvTxt" role="status">Loading the server list&hellip;</p>
+      <div class="who" id="srvWho" hidden><span id="srvIcon"></span><a id="srvName" href="/dashboard"></a><span class="muted" id="srvDist"></span><span class="chip" id="srvState" hidden></span></div>
+      <div class="pick" id="srvPick" hidden><label for="srvSel">Server</label><select id="srvSel"></select><button type="button" id="srvNear">Nearest</button></div>
+    </div>
+    <p class="note" id="srvMsg" role="status"></p>
     <div class="strip" role="region" aria-label="Live status">
       <dl>
         <div><dt>Master node</dt><dd id="stMaster">&mdash;</dd></div>
@@ -145,9 +167,10 @@ footer a{color:var(--signal)}
   var SENTINEL = -2147483648, FRESH_S = 180, DASH = '—';
   var $ = function (id) { return document.getElementById(id); };
 
-  function getJson(url, ms) {
+  function getJson(url, ms, parent) {
     var ctl = new AbortController();
     var t = setTimeout(function () { ctl.abort(); }, ms || 8000);
+    if (parent) parent.addEventListener('abort', function () { ctl.abort(); });
     return fetch(url, { cache: 'no-store', signal: ctl.signal }).then(function (r) {
       return r.text().then(function (txt) {
         var body = null;
@@ -172,21 +195,85 @@ footer a{color:var(--signal)}
   }
   function setMsg(text, bad) { var m = $('stMsg'); m.textContent = text; m.className = 'msg' + (bad ? ' bad' : ''); }
 
-  /* ---------- live status ---------- */
-  var delay = 15000, lastGood = null;
-  function showFailure(text) {
-    setMsg(text + (lastGood ? ' Showing data from ' + hhmm(lastGood) + '.' : ''), true);
+  /* ---------- chosen server + live status ---------- */
+  var KEY = 'jaga.server', OPTS = { timeout: 10000, enableHighAccuracy: false };
+  var servers = [], cur = null, tok = 0, timer = 0, ctl = null, pos = null, delay = 15000, lastGood = null;
+  function num(v) { return v == null || v === '' ? NaN : Number(v); }
+  function originOf(e) { try { return new URL(e.url).origin; } catch (x) { return null; } }
+  function hasPos(e) { return isFinite(num(e.lat)) && isFinite(num(e.lng)); }
+  // Page of one server: /server/<slug> for hub entries, else the server's own address. Relative when on this origin.
+  function target(e) { return e.slug ? (originOf(e) === location.origin ? '' : originOf(e)) + '/server/' + e.slug : (e.url || '/dashboard'); }
+  function km(e) {
+    var r = Math.PI / 180, dLa = (num(e.lat) - pos.lat) * r, dLo = (num(e.lng) - pos.lng) * r;
+    var a = Math.pow(Math.sin(dLa / 2), 2) + Math.cos(pos.lat * r) * Math.cos(num(e.lat) * r) * Math.pow(Math.sin(dLo / 2), 2);
+    return 12742 * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+  function fmtKm(d) { return (d < 10 ? d.toFixed(1) : String(Math.round(d))) + ' km'; }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (x) { /* no storage */ } return null; }
+  function nearest() {
+    var best = null, bd = Infinity;
+    if (pos) servers.forEach(function (e) { if (hasPos(e)) { var d = km(e); if (d < bd) { bd = d; best = e; } } });
+    return best;
+  }
+  function barMsg(t) { $('srvMsg').textContent = t; }
+
+  function paintBar() {
+    var e = cur, ic = $('srvIcon');
+    $('srvName').textContent = e.name || 'Unnamed server';
+    $('srvName').href = target(e);
+    function avatar() {
+      var d = document.createElement('span');
+      d.className = 'avatar'; d.setAttribute('aria-hidden', 'true');
+      d.textContent = (String(e.name || '?').trim().charAt(0) || '?').toUpperCase();
+      return d;
+    }
+    ic.textContent = '';
+    var logo;
+    if (e.logo) {
+      logo = document.createElement('img');
+      logo.className = 'logo'; logo.alt = ''; logo.width = logo.height = 28;
+      logo.src = String(e.logo).charAt(0) === '/' ? originOf(e) + e.logo : e.logo;
+      logo.addEventListener('error', function () { if (logo.parentNode) logo.replaceWith(avatar()); });
+    }
+    ic.appendChild(logo || avatar());
+    $('srvDist').textContent = pos && hasPos(e) ? fmtKm(km(e)) + ' away' : '';
+    var c = $('srvState');
+    c.hidden = typeof e.online !== 'boolean';
+    c.textContent = e.online === false ? 'offline' : 'online';
+    c.className = 'chip ' + (e.online === false ? 'bad' : 'ok');
+  }
+  function use(e, save) {
+    cur = e; tok++; clearTimeout(timer); if (ctl) ctl.abort();
+    delay = 15000; lastGood = null;
+    if (save) store(KEY, e.slug || e.url);
+    $('srvSel').value = String(servers.indexOf(e));
+    paintBar();
+    setStat('stMaster', DASH); setStat('stNodes', DASH); setStat('stLevel', DASH);
+    setMsg('Checking the server…', false);
+    refresh(tok);
+  }
+
+  function showFailure(text, raw) {
+    setMsg(text + (lastGood && !raw ? ' Showing data from ' + hhmm(lastGood) + '.' : ''), true);
     if (!lastGood) {
       setStat('stMaster', DASH); setStat('stNodes', DASH); setStat('stLevel', DASH);
     }
   }
-  function refresh() {
-    Promise.all([getJson('/api/status'), getJson('/api/latest'), getJson('/api/nodes')]).then(function (r) {
+  function refresh(t) {
+    var b = originOf(cur) + (cur.slug ? '/server/' + cur.slug : '');
+    ctl = new AbortController();
+    var sig = ctl.signal;
+    Promise.all([getJson(b + '/api/status', 0, sig), getJson(b + '/api/latest', 0, sig), getJson(b + '/api/nodes', 0, sig)]).then(function (r) {
+      if (t !== tok) return;
       var st = r[0], lt = r[1], nd = r[2];
+      var age = st.body ? num(st.body.site_age_s) : NaN;
+      var so = st.body && st.body.site_ok === false
+        ? 'This site is offline.' + (isFinite(age) ? ' Showing data from ' + hhmm(Date.now() - age * 1000) + '.' : '') : '';
+      function say(text, bad) { if (so) setMsg(so, true); else setMsg(text, bad); }
       var down = st.status === 503 && st.body && st.body.error && st.body.error.code === 'master_unreachable';
       if (down || (st.ok && st.body && st.body.master_ok === false)) {
         setStat('stMaster', 'Unreachable', 'bad');
-        showFailure('The server can’t reach the master node.');
+        if (so) showFailure(so, true); else showFailure('The server can’t reach the master node.');
         delay = 15000; // server answered, so no back-off
         return;
       }
@@ -213,20 +300,86 @@ footer a{color:var(--signal)}
       if (!rows.length) {
         setStat('stNodes', total ? '0 of ' + total : DASH, total ? 'bad' : '', total ? 'reporting' : '');
         setStat('stLevel', DASH);
-        setMsg('No readings yet.', true);
+        say('No readings yet.', true);
         return;
       }
       var cls = total && reporting === 0 ? 'bad' : (total && reporting < total ? 'warn' : 'ok');
       setStat('stNodes', total ? reporting + ' of ' + total : String(reporting), cls, 'reporting');
       if (best) setStat('stLevel', (best.mm / 1000).toFixed(2) + ' m', '', names[best.id] || ('Node ' + best.id));
       else setStat('stLevel', DASH);
-      setMsg('Updated ' + hhmm(lastGood) + '.', false);
+      say('Updated ' + hhmm(lastGood) + '.', false);
     }).catch(function () {
+      if (t !== tok) return;
+      if (originOf(cur) !== location.origin) { // most likely blocked by CORS: stop polling this server
+        setStat('stMaster', DASH); setStat('stNodes', DASH); setStat('stLevel', DASH);
+        var m = $('stMsg'); m.className = 'msg bad';
+        m.textContent = 'This server can’t be read from here. ';
+        var a = document.createElement('a'); a.href = target(cur); a.textContent = 'Open its dashboard.';
+        m.appendChild(a);
+        return 'stop';
+      }
       showFailure('Can’t reach the server.');
       delay = Math.min(delay * 2, 60000);
-    }).then(function () { setTimeout(refresh, delay); });
+    }).then(function (s) { if (t === tok && s !== 'stop') timer = setTimeout(function () { refresh(t); }, delay); });
   }
-  refresh();
+
+  /* ---------- picking the server ---------- */
+  function granted(cb) { // only if location is already allowed; never prompts
+    if (!navigator.permissions || !navigator.permissions.query || !navigator.geolocation) return cb(false);
+    navigator.permissions.query({ name: 'geolocation' }).then(function (s) {
+      if (s.state !== 'granted') return cb(false);
+      navigator.geolocation.getCurrentPosition(function (r) { pos = { lat: r.coords.latitude, lng: r.coords.longitude }; cb(true); }, function () { cb(false); }, OPTS);
+    }, function () { cb(false); });
+  }
+  function nearParam() { // testing aid: ?near=lat,lng simulates a position
+    var t = new URLSearchParams(location.search).get('near');
+    var p = t ? t.split(',') : [];
+    return p.length === 2 && isFinite(num(p[0])) && isFinite(num(p[1])) ? { lat: +p[0], lng: +p[1] } : null;
+  }
+  function pickNearest() {
+    var e = nearest();
+    if (!e) return barMsg('No server has a listed location.');
+    barMsg(''); use(e, true);
+  }
+  function locate() {
+    var np = nearParam();
+    if (np) { pos = np; return pickNearest(); }
+    if (!navigator.geolocation) return barMsg('Couldn’t get your location.');
+    navigator.geolocation.getCurrentPosition(function (r) {
+      pos = { lat: r.coords.latitude, lng: r.coords.longitude }; pickNearest();
+    }, function (err) {
+      barMsg(err && err.code === 1 ? 'Location is blocked for this site.' : 'Couldn’t get your location.');
+    }, OPTS);
+  }
+  function findServer(k) {
+    for (var i = 0; i < servers.length; i++) if (k && (servers[i].slug === k || servers[i].url === k)) return servers[i];
+    return null;
+  }
+  function fallback() {
+    return servers.filter(function (e) { return e.online !== false; })[0] || servers[0];
+  }
+  function loadChoices() {
+    function bar(t) { $('srvTxt').textContent = t; $('srvTxt').hidden = !t; $('srvWho').hidden = $('srvPick').hidden = !!t; }
+    getJson('/servers.json').then(function (r) {
+      if (!r.ok || !Array.isArray(r.body)) throw new Error('bad');
+      servers = r.body.filter(function (e) { return e && typeof e === 'object' && e.url && originOf(e); });
+      if (!servers.length) { bar('No servers are registered yet.'); setMsg('', false); return; }
+      var sel = $('srvSel');
+      servers.forEach(function (e, i) { var o = document.createElement('option'); o.value = i; o.textContent = e.name || 'Unnamed server'; sel.appendChild(o); });
+      bar('');
+      // testing aid: ?server=<slug or url> preselects a server without saving it
+      var start = findServer(new URLSearchParams(location.search).get('server')) || findServer(store(KEY)), np = nearParam();
+      if (np) pos = np;
+      if (start) {
+        use(start, false);
+        if (!np) granted(function (ok) { if (ok && cur === start) paintBar(); });
+      } else if (np) use(nearest() || fallback(), false);
+      else granted(function () { use(nearest() || fallback(), false); });
+    }).catch(function () { bar('Could not load the server list.'); setMsg('', false); });
+  }
+  $('srvSel').addEventListener('change', function () { barMsg(''); use(servers[+this.value], true); });
+  $('srvNear').addEventListener('click', locate);
+  loadChoices();
 
   /* ---------- servers ---------- */
   function ping(e) {
@@ -238,10 +391,10 @@ footer a{color:var(--signal)}
             function () { clearTimeout(timer); return null; });
   }
   function fmtCoord(v, pos, neg) { var n = Number(v); return isFinite(n) ? Math.abs(n).toFixed(4) + '°' + (n >= 0 ? pos : neg) : DASH; }
-  // Page of one server: /slug for hub entries, /site for a stack without a hub. Relative when on this origin.
+  // Page of one server: /server/<slug> for hub entries, else the server's own address. Relative when on this origin.
   function target(e) {
     var o; try { o = new URL(e.url).origin; } catch (x) { return '/dashboard'; }
-    return (o === location.origin ? '' : o) + (e.slug ? '/' + e.slug : '/site');
+    return e.slug ? (o === location.origin ? '' : o) + '/server/' + e.slug : e.url;
   }
   function card(s) {
     var url = String(s.url || ''), el = document.createElement('article');

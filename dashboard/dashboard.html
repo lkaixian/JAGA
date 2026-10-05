@@ -125,15 +125,15 @@ footer p{margin:0}
   function originOf(e) { try { return new URL(e.url).origin; } catch (x) { return null; } }
   function hasPos(e) { return isFinite(num(e.lat)) && isFinite(num(e.lng)); }
 
-  // Page of one server: /slug for hub entries, /site for a stack without a hub. Relative when on this origin.
+  // Page of one server: /server/<slug> for hub entries, else the server's own address. Relative when on this origin.
   function target(e) {
     var o = originOf(e);
     if (!o) return '/dashboard';
-    return (o === location.origin ? '' : o) + (e.slug ? '/' + e.slug : '/site');
+    return e.slug ? (o === location.origin ? '' : o) + '/server/' + e.slug : e.url;
   }
   function address(e) {
     var o = originOf(e);
-    return o ? o.replace(/^[a-z]+:\/\//i, '') + (e.slug ? '/' + e.slug : '/site') : DASH;
+    return o ? o.replace(/^[a-z]+:\/\//i, '') + (e.slug ? '/server/' + e.slug : '') : DASH;
   }
   function km(e) {
     var r = Math.PI / 180, dLa = (num(e.lat) - pos.lat) * r, dLo = (num(e.lng) - pos.lng) * r;

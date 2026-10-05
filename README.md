@@ -116,7 +116,7 @@ One-time setup, about 15 minutes. No router ports are opened and the master node
 5. **Start it.** `docker compose --profile tunnel up -d`
 6. **Check it.** Open `https://jaga.larmkx.com` (homepage), `https://jaga.larmkx.com/dashboard`, and `https://jaga.larmkx.com/servers.json` (the list the app reads).
 
-What you get: `/` homepage with the server list and app download, `/dashboard` the live dashboard, `/servers.json` the directory for the app, `/api/...` the data.
+What you get: `/` homepage (pick a server, app download), `/dashboard` the server picker with the nearest servers, `/server/<slug>` one site's live dashboard (a bare `/<slug>` redirects there), `/servers.json` the directory for the app, `/server/<slug>/api/...` that site's data.
 The PC running Docker must stay on and on the same network as the master node. Visitors can read; moving a pin is blocked for tunnel traffic. To require a login for reading too, add a Cloudflare Access policy (email one-time PIN) on `jaga.larmkx.com`, but note the phone app cannot pass that login.
 To offer the Android app on the homepage, copy the APK to `downloads/jaga.apk` (the folder is gitignored).
 Server list for the app: add one entry per deployment to `dashboard/servers.json` (`name`, `url`, `lat`, `lng`, optional `logo` path or URL). This server's icon comes from `SITE_LOGO` (default `/uthm.png`).
