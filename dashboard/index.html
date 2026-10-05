@@ -80,6 +80,8 @@ body{
 @keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 .banner.warning{border-left-color:var(--amber);background:linear-gradient(90deg,rgba(255,176,32,.16),rgba(255,176,32,.02))}
 .banner.danger{border-left-color:var(--siren);background:linear-gradient(90deg,rgba(255,90,71,.18),rgba(255,90,71,.02))}
+.banner.link{border-left-color:var(--mist);background:linear-gradient(90deg,rgba(127,166,198,.18),rgba(127,166,198,.02))}
+.banner.link .tag{color:var(--mist)}
 .banner .tag{
   font-family:var(--font-display);font-weight:700;font-size:15px;letter-spacing:.14em;
   text-transform:uppercase;white-space:nowrap;
@@ -193,6 +195,11 @@ tr.stale{opacity:.5}
     <div class="clock" id="clock">--:--:--</div>
     <div class="livepill"><i class="dot"></i><span id="modeLabel">Simulated feed</span></div>
   </header>
+
+  <div class="banner link" id="linkBanner">
+    <div class="tag">Link</div>
+    <div class="msg" id="linkMsg"></div>
+  </div>
 
   <div class="banner" id="banner">
     <div class="tag" id="bannerTag">Warning</div>
@@ -312,6 +319,7 @@ tr.stale{opacity:.5}
     <h2>Node placement</h2>
     <div id="map" role="img" aria-label="Map of the sensor nodes near UTHM Parit Raja"></div>
     <div class="hint">Drag a pin to move a node (saved on the server). Ring colour = status; bold blue = OpenStreetMap rivers and canals.</div>
+    <div class="hint" id="pinNote" style="color:var(--amber)"></div>
   </section>
 
   <!-- node table -->
@@ -337,6 +345,7 @@ tr.stale{opacity:.5}
   <footer class="foot">
     <span>Data source: <code id="srcCode">api</code></span>
     <span>Add <code>?sim</code> to the address for the simulated storm. Rain, battery and RSSI show &mdash; until those sensors exist.</span>
+    <span id="healthNote"></span>
     <span>Map data &copy; OpenStreetMap contributors.</span>
   </footer>
 </div>
@@ -405,7 +414,11 @@ async function getJSON(path){
   const timer = setTimeout(() => ctl.abort(), 5000);
   try {
     const r = await fetch(API + path, { signal: ctl.signal });
-    if(!r.ok) throw new Error(path + ' ' + r.status);
+    if(!r.ok){
+      const e = new Error(path + ' ' + r.status);
+      e.code = (await r.json().catch(() => null))?.error?.code;     // our server's error shape
+      throw e;
+    }
     return await r.json();
   } finally { clearTimeout(timer); }
 }
@@ -413,11 +426,14 @@ async function getJSON(path){
 // Rows are newest-first per node; failed sonar reads are dropped. Rain, battery and RSSI
 // have no sensor yet, so they stay null and the UI shows a dash.
 async function fetchApi(){
-  const results = await Promise.allSettled(
-    NODES.map(n => getJSON(`/api/history?node=${nodeNum(n.id)}&limit=300`)));
-  if(results.every(r => r.status === 'rejected')) throw results[0].reason;
+  const [st, ...results] = await Promise.allSettled([getJSON('/api/status'),
+    ...NODES.map(n => getJSON(`/api/history?node=${nodeNum(n.id)}&limit=300`))]);
+  if(results.every(r => r.status === 'rejected') && st.status === 'rejected') throw st.reason;
+  apiStatus = st.status === 'fulfilled' ? st.value : null;     // a failed /api/status alone is not a failed poll
+  if(st.status === 'rejected' && st.reason.code === 'master_unreachable') apiStatus = { master_ok: false };  // server up, master never reached
   NODES.forEach((n, i) => {
-    const rows = results[i].status === 'fulfilled' ? results[i].value : [];
+    if(results[i].status === 'rejected') return;             // keep what is on screen for this node
+    const rows = results[i].value;
     // newest raw row decides live / fault / no signal; older valid points still feed chart and rate
     meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s } : null;
     store[n.id] = rows.slice().reverse()
@@ -434,6 +450,7 @@ async function fetchApi(){
 /* =========================================================================
    3. SIMULATOR — a convective storm passing over the network
    ========================================================================= */
+let apiStatus = null;                    // last /api/status reply (api mode)
 let simMin = 0;                       // simulated minutes elapsed
 const store = {};                     // id -> [{t, level, rain, batt, rssi, snr}]
 const meta = {};                      // id -> newest raw row {fault, rx} (api mode), null = no rows
@@ -675,7 +692,23 @@ function drawBanner(){
   $('bannerMsg').innerHTML = msg;
 }
 
+let link = 'ok', lastOk = null;       // link: ok | server | master;  lastOk: ms of last good poll
+const hhmm = ms => new Date(ms).toTimeString().slice(0,5);
+
+function drawLink(){
+  const b = $('linkBanner');
+  let msg = '';
+  if(link === 'server') msg = "Can't reach the server." + (lastOk ? ` Showing data from ${hhmm(lastOk)}.` : '');
+  else if(link === 'master') msg = "The server can't reach the master node."
+    + (apiStatus.master_age_s != null ? ` Readings stopped at ${hhmm(lastOk - apiStatus.master_age_s*1000)}.` : '');
+  b.className = 'banner link' + (msg ? ' on' : '');
+  $('linkMsg').textContent = msg;
+  $('healthNote').textContent = [apiStatus?.sd_ok === false && "The master's SD card isn't logging.",
+    apiStatus?.radio_ok === false && "The master's radio isn't receiving."].filter(Boolean).join(' ');
+}
+
 function render(){
+  drawLink();
   const n = NODES.find(x => x.id === activeId);
   const buf = store[n.id];
   const { st, p, rate, sev, mins } = nodeInfo(n);
@@ -736,16 +769,19 @@ function render(){
 /* =========================================================================
    6. LOOP
    ========================================================================= */
+let fails = 0;
 async function tick(){
   if(SOURCE.mode === 'simulate'){
     simStep();
   } else if(SOURCE.mode === 'api'){
     try {
       await fetchApi();
-      $('modeLabel').textContent = 'Live feed · ' + fmtClock();
+      lastOk = Date.now(); fails = 0;
+      link = apiStatus?.master_ok === false ? 'master' : 'ok';          // absent master_ok = talking to the master itself
     } catch(e){
-      $('modeLabel').textContent = 'Offline — showing last data';   // keep what we have on screen
+      fails++; link = 'server';                                      // keep what we have on screen
     }
+    $('modeLabel').textContent = link === 'ok' ? 'Live feed · ' + fmtClock() : 'Offline — showing last data';
   } else {
     try {
       const rows = await SOURCE.fetchLatest();
@@ -786,13 +822,19 @@ function pinIcon(n, sev){
        + `color:#E7F3FF;font:600 10px/16px 'IBM Plex Mono',monospace;text-align:center">${nodeNum(n.id)}</div>` });
 }
 
-async function savePos(n){
+let noteTimer;
+async function savePos(n, prev){
   try {
     const r = await fetch(`${API}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat:n.lat, lng:n.lng }) });
     if(!r.ok) throw new Error(r.status);
   } catch(e){
-    alert('Position changed in this page only: ' + API + " doesn't accept saves (use the Python server).");
+    n.lat = prev.lat; n.lng = prev.lng;          // put the pin back
+    pins[n.id].setLatLng([prev.lat, prev.lng]);
+    fitKey = posKey();
+    $('pinNote').textContent = "Couldn't save the position. Nothing changed.";
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { $('pinNote').textContent = ''; }, 8000);
   }
 }
 
@@ -815,11 +857,13 @@ function drawMap(){
       pin = pins[n.id] = L.marker([n.lat, n.lng], { draggable:true, icon:pinIcon(n, sev) }).addTo(leafMap);
       pin.bindTooltip(() => `${n.name} (${n.id})<br>${n.lat.toFixed(5)}°N ${n.lng.toFixed(5)}°E`);
       pin.on('click', () => { activeId = n.id; render(); });
+      let prev;
+      pin.on('dragstart', () => { prev = { lat:n.lat, lng:n.lng }; });
       pin.on('dragend', () => {
         const ll = pin.getLatLng();
         n.lat = ll.lat; n.lng = ll.lng;
         fitKey = posKey();                      // don't re-zoom under the user's hand
-        savePos(n);
+        savePos(n, prev);
       });
     } else if(!pin.dragging._draggable._moving){
       pin.setLatLng([n.lat, n.lng]);
@@ -844,9 +888,18 @@ async function loadPositions(){
 }
 
 window.addEventListener('load', () => { if(leafMap){ leafMap.invalidateSize(); fitKey = ''; drawMap(); } });  // fonts/layout settle after first paint
+let pollTimer, busy = false;
+async function poll(){                         // api mode: 10 s, or 20 / 30 s after failures
+  if(busy) return;
+  busy = true; clearTimeout(pollTimer);
+  await tick();
+  busy = false;
+  pollTimer = setTimeout(poll, 10000 * Math.min(3, Math.max(1, fails)));
+}
 render();
-if(SOURCE.mode !== 'simulate'){ tick(); loadPositions(); }
-setInterval(tick, SOURCE.mode === 'simulate' ? CFG.tickMs : 10000);
+if(SOURCE.mode !== 'simulate'){ poll(); loadPositions(); }
+if(SOURCE.mode === 'simulate') setInterval(tick, CFG.tickMs);
+else document.addEventListener('visibilitychange', () => { if(!document.hidden) poll(); });
 setInterval(() => { $('clock').textContent = fmtClock(); }, 1000);
 $('clock').textContent = fmtClock();
 </script>
