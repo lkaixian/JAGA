@@ -145,3 +145,13 @@ Readings are public, so the Flutter app has no login. It works like a game lobby
 - Joined servers are remembered (last 5); Settings > Switch server returns to the lobby, and it won't auto-join again.
 - To list a new deployment: add `{name, url, lat, lng}` to `servers.json`. Each server also reports its own centre at
   `GET /api/site` (name from the `SITE_NAME` env var).
+
+## iPhone
+
+The Flutter code is shared with Android, but an iPhone build needs a Mac and Xcode, so it cannot be built or tested on a Windows PC. **The iOS build has not been tested by anyone yet.**
+
+1. Build: GitHub > Actions > "iOS build (unsigned)" > Run workflow. It builds on a GitHub Mac (manual trigger only) and gives you `jaga-unsigned.ipa` as a downloadable artifact.
+2. Install on a real iPhone, which needs signing:
+   - **Free:** sign with your own Apple ID using Sideloadly or AltStore on a PC. The install expires after 7 days and must be redone; up to 3 apps.
+   - **Paid ($99 a year, Apple Developer Program):** TestFlight or ad hoc builds. This needs signing certificates added to the workflow as secrets; not set up.
+3. First things to check on a phone: the location prompt, the notification prompt (alerts show while the app is open), the map, and joining a server.
