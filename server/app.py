@@ -253,21 +253,34 @@ def status():
             "api_version": API_VERSION}
 
 
+# The team's five drain stations. The master's own names and positions are placeholders, so these win.
+DEFAULT_NODES = {1: ("Tasik G3", 1.8630, 103.0840), 2: ("Infront FKAAB", 1.8640, 103.0850),
+                 3: ("Infront FSKTM", 1.8650, 103.0860), 4: ("Infront FPTP", 1.8660, 103.0870),
+                 5: ("Infront FKEE", 1.8670, 103.0880)}
+
+
 @app.get("/api/nodes")
 def nodes():
-    with closing(db()) as c:  # positions set from the dashboard override the master's placeholders
-        pos = {r["node_id"]: r for r in c.execute("SELECT * FROM node_pos")}
-    # master offline: still serve saved positions (ids only) so the map is right before the master is up
-    base = master["nodes"] or [{"node_id": i, "name": f"Node {i}"} for i in pos]
-    return [{**n, "lat": pos[n["node_id"]]["lat"], "lng": pos[n["node_id"]]["lng"]} if n["node_id"] in pos else n
-            for n in base]
+    """Every node this server knows about, whether or not the master is reachable right now."""
+    out = {i: {"node_id": i, "name": n, "lat": la, "lng": lo} for i, (n, la, lo) in DEFAULT_NODES.items()}
+    for n in master["nodes"] or []:  # nodes the defaults don't cover
+        if isinstance(n, dict) and isinstance(n.get("node_id"), int) and n["node_id"] >= 1:
+            out.setdefault(n["node_id"], dict(n))
+    with closing(db()) as c:
+        for (i,) in c.execute("SELECT DISTINCT node_id FROM readings WHERE node_id >= 1"):
+            out.setdefault(i, {"node_id": i, "name": f"Node {i}"})
+        for r in c.execute("SELECT * FROM node_pos"):  # positions saved from the dashboard
+            out.setdefault(r["node_id"], {"node_id": r["node_id"], "name": f"Node {r['node_id']}"}).update(
+                lat=r["lat"], lng=r["lng"])
+    return [out[i] for i in sorted(out)]
 
 
 @app.get("/api/site")
 def site():
-    """Name + centre point, so the app can show this server in its lobby."""
-    pts = [(n["lat"], n["lng"]) for n in nodes() if "lat" in n]
+    """Name, logo and centre point, so the app can show this server in its lobby."""
+    pts = [(n["lat"], n["lng"]) for n in nodes() if n.get("lat") is not None and n.get("lng") is not None]
     return {"name": os.environ.get("SITE_NAME", "JAGA"),
+            "logo": os.environ.get("SITE_LOGO", "/logo.png"),  # path on this server, or a full URL
             "lat": sum(p[0] for p in pts) / len(pts) if pts else None,
             "lng": sum(p[1] for p in pts) / len(pts) if pts else None}
 

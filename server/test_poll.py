@@ -183,7 +183,9 @@ mode.update(hist=[], raw=None)
 assert c.put("/api/nodes/1", json={"lat": 1.5, "lng": 2.5}).status_code == 200
 old_nodes, A.master["nodes"] = A.master["nodes"], None
 n1 = [n for n in c.get("/api/nodes").json() if n["node_id"] == 1][0]
-assert n1["name"] == "Node 1" and n1["lat"] == 1.5
+assert n1["name"] == "Tasik G3" and n1["lat"] == 1.5  # saved position wins, team name stays
+assert [n["node_id"] for n in c.get("/api/nodes").json()][:5] == [1, 2, 3, 4, 5]  # all five even with no master
+assert c.get("/api/site").json()["logo"] == "/logo.png"
 A.master["nodes"] = old_nodes
 
 # item 6: status is one tuple, age and now_s come from the same assignment
