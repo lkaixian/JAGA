@@ -19,11 +19,15 @@ from trend import analyze
 MASTER = os.environ.get("MASTER_URL", "http://jaga-master.local").rstrip("/")  # use the IP in Docker: no mDNS
 DB = os.environ.get("DB_PATH", "/data/jaga.db")
 POLL_S = 10
+RETAIN_DAYS = 180  # readings older than this are deleted, once a day
+API_VERSION = 1  # bump on a breaking change so old apps can say so
 COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "humidity_pct",
         "distance_mm", "distance_stddev_mm", "water_level_mm")
 
 master = {"status": None, "status_at": 0.0, "nodes": None}
-health = {"master_ok": False, "last_ok": 0.0, "fails": 0}
+health = {"master_ok": False, "last_ok": 0.0, "fails": 0, "db_ok": True}
+rejected = 0  # master rows dropped as malformed since start
+last_prune = 0.0
 
 
 def db():
@@ -48,6 +52,35 @@ def fetch(path):
         return json.load(r)
 
 
+def valid(r):
+    if not isinstance(r, dict) or not all(k in r for k in COLS):
+        return False
+    num = lambda v, t: isinstance(v, t) and not isinstance(v, bool)
+    return (num(r["node_id"], int) and r["node_id"] >= 1
+            and all(num(r[k], int) for k in COLS if k.endswith(("_s", "_mm")))
+            and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct")))
+
+
+def store(rows):
+    global rejected, last_prune
+    good = [r for r in rows if valid(r)]
+    rejected += len(rows) - len(good)
+    with closing(db()) as c, c:
+        if time.time() - last_prune >= 86400:
+            n = c.execute("DELETE FROM readings WHERE received_at < ?", (time.time() - RETAIN_DAYS * 86400,)).rowcount
+            last_prune = time.time()
+            if n:
+                print(f"pruned {n} readings older than {RETAIN_DAYS} days", flush=True)
+        for r in good:
+            last = c.execute("SELECT log_timestamp_s, sender_timestamp_s FROM readings "
+                             "WHERE node_id=? ORDER BY id DESC LIMIT 1", (r["node_id"],)).fetchone()
+            # master re-serves the same newest reading until a new one lands; store each once
+            if last and (last[0], last[1]) == (r["log_timestamp_s"], r["sender_timestamp_s"]):
+                continue
+            c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
+                      (time.time(), *[r[k] for k in COLS]))
+
+
 def poll_once():
     ok = 0
     for key, path in (("status", "/api/status"), ("nodes", "/api/nodes")):
@@ -60,18 +93,20 @@ def poll_once():
             pass
     try:
         rows = fetch("/api/latest")
+        if not isinstance(rows, list):
+            raise ValueError("latest is not a list")
         ok += 1
-        with closing(db()) as c, c:
-            for r in rows:
-                last = c.execute("SELECT log_timestamp_s, sender_timestamp_s FROM readings "
-                                 "WHERE node_id=? ORDER BY id DESC LIMIT 1", (r["node_id"],)).fetchone()
-                # master re-serves the same newest reading until a new one lands; store each once
-                if last and (last[0], last[1]) == (r["log_timestamp_s"], r["sender_timestamp_s"]):
-                    continue
-                c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
-                          (time.time(), *[r[k] for k in COLS]))
     except Exception:
-        pass
+        rows = []
+    try:
+        store(rows)
+        if not health["db_ok"]:
+            health["db_ok"] = True
+            print("database writable again", flush=True)
+    except sqlite3.Error as e:  # the master answered fine, so this is not a failed poll
+        if health["db_ok"]:
+            health["db_ok"] = False
+            print("database error: readings are not being stored:", repr(e), flush=True)
     was = health["master_ok"]
     if ok:
         health.update(master_ok=True, last_ok=time.time(), fails=0)
@@ -156,7 +191,9 @@ def healthz():
             c.execute("SELECT 1 FROM readings LIMIT 1")
     except sqlite3.Error:
         return err(503, "db_unavailable", "The server can't open its database.")
-    return {"ok": True}
+    if not health["db_ok"]:
+        return err(503, "db_unavailable", "The server can't open its database.")
+    return {"ok": True, "rejected": rejected}
 
 
 @app.get("/api/status")
@@ -166,7 +203,8 @@ def status():
         return err(503, "master_unreachable", "The server hasn't reached the master node yet.")
     elapsed = time.time() - master["status_at"]  # keep now_s ticking while the master is unreachable
     return {**st, "now_s": st["now_s"] + int(elapsed), "uptime_s": st["uptime_s"] + int(elapsed),
-            "master_age_s": int(elapsed), "master_ok": health["master_ok"]}
+            "master_age_s": int(elapsed), "master_ok": health["master_ok"],
+            "api_version": API_VERSION}
 
 
 @app.get("/api/nodes")
