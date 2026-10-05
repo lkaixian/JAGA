@@ -420,15 +420,33 @@ async function getJSON(path){
       throw e;
     }
     return await r.json();
+  } catch(e){
+    if(!e.message.includes(path)) e.message = path + ': ' + e.message;     // say which request failed
+    throw e;
   } finally { clearTimeout(timer); }
+}
+
+// History for one node: must be an array of rows with finite numbers; bad rows are dropped.
+// An array where every row is bad counts as a failed request (an empty array is just no data).
+const okRow = r => r && Number.isFinite(r.water_level_mm) && Number.isFinite(r.log_timestamp_s)
+  && (r.received_at == null || Number.isFinite(r.received_at));
+async function getHistory(path){
+  const rows = await getJSON(path);
+  if(!Array.isArray(rows)) throw Object.assign(new Error(path + ': reply is not a list'), { bad:true });
+  const ok = rows.filter(okRow);
+  if(rows.length && !ok.length) throw Object.assign(new Error(path + ': rows have no water level'), { bad:true });
+  return ok;
 }
 
 // Rows are newest-first per node; failed sonar reads are dropped. Rain, battery and RSSI
 // have no sensor yet, so they stay null and the UI shows a dash.
 async function fetchApi(){
   const [st, ...results] = await Promise.allSettled([getJSON('/api/status'),
-    ...NODES.map(n => getJSON(`/api/history?node=${nodeNum(n.id)}&limit=300`))]);
-  if(results.every(r => r.status === 'rejected') && st.status === 'rejected') throw st.reason;
+    ...NODES.map(n => getHistory(`/api/history?node=${nodeNum(n.id)}&limit=300`))]);
+  const failed = [st, ...results].filter(r => r.status === 'rejected');
+  failed.forEach(r => console.error(r.reason));
+  pollErr = failed.map(r => r.reason.message).join('; ');       // shown as a tooltip on the banner and pill
+  if(results.every(r => r.status === 'rejected') && (st.status === 'rejected' || results.every(r => r.reason.bad))) throw failed[0].reason;
   apiStatus = st.status === 'fulfilled' ? st.value : null;     // a failed /api/status alone is not a failed poll
   if(st.status === 'rejected' && st.reason.code === 'master_unreachable') apiStatus = { master_ok: false };  // server up, master never reached
   NODES.forEach((n, i) => {
@@ -450,6 +468,7 @@ async function fetchApi(){
 /* =========================================================================
    3. SIMULATOR — a convective storm passing over the network
    ========================================================================= */
+let pollErr = '';                        // text of what failed in the last poll
 let apiStatus = null;                    // last /api/status reply (api mode)
 let simMin = 0;                       // simulated minutes elapsed
 const store = {};                     // id -> [{t, level, rain, batt, rssi, snr}]
@@ -703,6 +722,7 @@ function drawLink(){
     + (apiStatus.master_age_s != null ? ` Readings stopped at ${hhmm(lastOk - apiStatus.master_age_s*1000)}.` : '');
   b.className = 'banner link' + (msg ? ' on' : '');
   $('linkMsg').textContent = msg;
+  b.title = $('modeLabel').parentElement.title = pollErr;
   $('healthNote').textContent = [apiStatus?.sd_ok === false && "The master's SD card isn't logging.",
     apiStatus?.radio_ok === false && "The master's radio isn't receiving."].filter(Boolean).join(' ');
 }
@@ -838,14 +858,24 @@ async function savePos(n, prev){
   }
 }
 
+const MAPMSG = "The map couldn't load. The readings above and below still update.";
 function drawMap(){
+  try { drawMapInner(); }
+  catch(e){ console.error(e); $('map').textContent = MAPMSG; }
+}
+
+const TILEMSG = "Map tiles couldn't load. Pins still show where the nodes are.";
+function drawMapInner(){
   const box = $('map');
-  if(!window.L){ box.textContent = 'Map needs internet access (Leaflet / OpenStreetMap failed to load).'; return; }
+  if(!window.L){ box.textContent = MAPMSG; return; }
   if(!leafMap){
     box.textContent = '';
     leafMap = L.map(box, { scrollWheelZoom:false });
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' }).addTo(leafMap);
+      { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' })
+      .on('tileerror', () => { if(!$('pinNote').textContent) $('pinNote').textContent = TILEMSG; })
+      .on('tileload', () => { if($('pinNote').textContent === TILEMSG) $('pinNote').textContent = ''; })
+      .addTo(leafMap);
     (window.RIVERS || []).forEach(w =>
       L.polyline(w.p, { color:'#0b5cd5', weight:5, opacity:.85 }).bindTooltip(w.n || w.w).addTo(leafMap));
   }
@@ -892,7 +922,7 @@ let pollTimer, busy = false;
 async function poll(){                         // api mode: 10 s, or 20 / 30 s after failures
   if(busy) return;
   busy = true; clearTimeout(pollTimer);
-  await tick();
+  try { await tick(); } catch(e){ console.error(e); }          // a render bug must not stop the polling
   busy = false;
   pollTimer = setTimeout(poll, 10000 * Math.min(3, Math.max(1, fails)));
 }
