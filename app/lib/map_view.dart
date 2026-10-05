@@ -20,7 +20,7 @@ class _MapPainter extends CustomPainter {
   final List<Node> nodes;
   final Map<int, Color> colors;
   final ThemeData theme;
-  _MapPainter(this.nodes, this.colors, this.theme);
+  _MapPainter(List<Node> all, this.colors, this.theme) : nodes = all.where((n) => n.lat.isFinite && n.lng.isFinite).toList();
 
   @override
   void paint(Canvas canvas, Size size) {

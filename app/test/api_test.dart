@@ -1,12 +1,23 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/painting.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:jaga_app/main.dart' show nodeColor;
 import 'package:jaga_app/api.dart';
 import 'package:jaga_app/lobby.dart';
 import 'package:jaga_app/state.dart';
 
 void main() {
+  test('mergeNodeIds sorts and dedupes; nodeColor keeps 1..3 and wraps', () {
+    expect(mergeNodeIds([3, 1], [], [8, 3, 2]), [1, 2, 3, 8]);
+    expect(mergeNodeIds([], [], []), isEmpty);
+    expect(nodeColor(1), const Color(0xFF2A7FFF));
+    expect(nodeColor(2), const Color(0xFFE67E22));
+    expect(nodeColor(3), const Color(0xFF8E44AD));
+    expect(nodeColor(9), nodeColor(1));
+  });
+
   test('parses sentinels, classifies status, alerts only on crossing', () {
     final ok = Reading.fromJson({
       'log_timestamp_s': 10, 'node_id': 3, 'sender_timestamp_s': 10, 'temperature_c': 27.5,

@@ -16,6 +16,10 @@ const maxPoints = 90;
 bool crossedIntoAlert(NodeStatus? prev, NodeStatus next) =>
     next == NodeStatus.alert && prev != NodeStatus.alert;
 
+/// Sorted unique union of node ids from every source.
+List<int> mergeNodeIds(Iterable<int> known, Iterable<int> fromNodes, Iterable<int> fromLatest) =>
+    {...known, ...fromNodes, ...fromLatest}.toList()..sort();
+
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final SharedPreferences _prefs;
   final _notifier = FlutterLocalNotificationsPlugin();
@@ -29,13 +33,13 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   double warnMm = 700, dangerMm = 900, mountMm = 1000;
 
   List<Node> nodes = [];
-  final Map<int, List<Reading>> history = {1: [], 2: [], 3: []}; // oldest first
+  final Map<int, List<Reading>> history = {}; // node id (ascending) -> readings, oldest first
   Status? serverStatus;
   DateTime? lastOk;
   LinkState link = LinkState.connected;
   int _fails = 0;
   bool _paused = false;
-  bool _historyLoaded = false;
+  final Set<int> _historyLoaded = {};
   final Map<int, NodeStatus> _lastStatus = {};
   final Map<int, NodeHealth> _lastHealth = {};
   bool notificationsOff = false;
@@ -116,10 +120,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   void _reset() {
     nodes = [];
-    history.updateAll((_, _) => []);
+    history.clear();
     serverStatus = null;
     link = LinkState.connected;
-    _historyLoaded = false;
+    _historyLoaded.clear();
     _lastStatus.clear();
     _lastHealth.clear();
   }
@@ -186,14 +190,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> poll() async {
     try {
       if (nodes.isEmpty) nodes = await _api.nodes();
-      if (!_historyLoaded) {
-        for (final id in history.keys) {
-          history[id] = await _api.history(id);
-        }
-        _historyLoaded = true;
+      final latest = await _api.latest();
+      final ids = mergeNodeIds(history.keys, nodes.map((n) => n.id), latest.map((r) => r.nodeId));
+      final old = Map.of(history);
+      history
+        ..clear()
+        ..addEntries([for (final id in ids) MapEntry(id, old[id] ?? [])]);
+      for (final id in ids) {
+        if (_historyLoaded.contains(id)) continue;
+        history[id] = await _api.history(id);
+        _historyLoaded.add(id);
       }
       serverStatus = await _api.status();
-      for (final r in await _api.latest()) {
+      for (final r in latest) {
         final list = history[r.nodeId];
         if (list == null || (list.isNotEmpty && r.logTs <= list.last.logTs)) continue;
         list.add(r);

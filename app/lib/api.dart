@@ -52,7 +52,7 @@ class Node {
   final double lat, lng;
   Node(this.id, this.name, this.lat, this.lng);
   factory Node.fromJson(Map<String, dynamic> j) =>
-      Node(j['node_id'], j['name'], (j['lat'] as num).toDouble(), (j['lng'] as num).toDouble());
+      Node(j['node_id'], j['name'], (j['lat'] as num?)?.toDouble() ?? double.nan, (j['lng'] as num?)?.toDouble() ?? double.nan);
 }
 
 class Reading {

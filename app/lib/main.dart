@@ -6,7 +6,11 @@ import 'lobby.dart';
 import 'map_view.dart';
 import 'state.dart';
 
-const _nodeColors = {1: Color(0xFF2A7FFF), 2: Color(0xFFE67E22), 3: Color(0xFF8E44AD)};
+const _palette = [
+  Color(0xFF2A7FFF), Color(0xFFE67E22), Color(0xFF8E44AD), Color(0xFF16A085),
+  Color(0xFFC0392B), Color(0xFF7F8C8D), Color(0xFFD4AC0D), Color(0xFF2C3E50),
+];
+Color nodeColor(int id) => _palette[(id - 1) % _palette.length];
 const _statusColors = {
   NodeStatus.normal: Color(0xFF0CA30C),
   NodeStatus.watch: Color(0xFFFAB219),
@@ -163,7 +167,7 @@ class _NodeCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            CircleAvatar(radius: 6, backgroundColor: _nodeColors[id]),
+            CircleAvatar(radius: 6, backgroundColor: nodeColor(id)),
             const SizedBox(width: 8),
             Expanded(child: Text(name, style: Theme.of(context).textTheme.titleMedium)),
             if (st != null) Chip(label: Text(_statusLabels[st]!), backgroundColor: _statusColors[st]!.withValues(alpha: 0.2)),
@@ -202,7 +206,7 @@ class _HistoryTab extends StatelessWidget {
         Wrap(spacing: 12, children: [
           for (final id in s.history.keys)
             Chip(
-              avatar: CircleAvatar(backgroundColor: _nodeColors[id]),
+              avatar: CircleAvatar(backgroundColor: nodeColor(id)),
               label: Text(s.nodeById(id)?.name ?? 'Node $id'),
             ),
         ]),
@@ -232,7 +236,7 @@ class _HistoryTab extends StatelessWidget {
             lineBarsData: [
               for (final e in s.history.entries)
                 LineChartBarData(
-                  color: _nodeColors[e.key],
+                  color: nodeColor(e.key),
                   dotData: const FlDotData(show: false),
                   // x = how many readings back from the newest, so nodes with
                   // different lengths still line up at the right edge
