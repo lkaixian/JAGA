@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,6 +44,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final Map<int, NodeStatus> _lastStatus = {};
   final Map<int, NodeHealth> _lastHealth = {};
   bool notificationsOff = false;
+  ThemeMode themeMode = ThemeMode.system;
 
   bool get serverTooNew => (serverStatus?.apiVersion ?? 1) > supportedApiVersion;
   String? get cachedDirectory => _prefs.getString('directory');
@@ -51,6 +53,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
     host = _prefs.getString('host');
+    themeMode = ThemeMode.values.asNameMap()[_prefs.getString('theme')] ?? ThemeMode.system;
     siteName = _prefs.getString('siteName') ?? siteName;
     recent = [
       for (final j in jsonDecode(_prefs.getString('recent') ?? '[]') as List) Site.fromJson(j as Map<String, dynamic>)
@@ -165,6 +168,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> setThemeMode(ThemeMode m) async {
+    themeMode = m;
+    await _prefs.setString('theme', m.name);
+    notifyListeners();
   }
 
   Future<void> saveSettings(double warn, double danger, double mount) async {

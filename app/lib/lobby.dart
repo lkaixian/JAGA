@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
 import 'api.dart';
+import 'main.dart' show ThemeToggle;
 import 'state.dart';
 
 /// Public list of servers, served by the first deployment (dashboard/servers.json).
@@ -61,18 +62,32 @@ Future<String> fetchDirectory() async {
 List<Site> parseDirectory(String json) =>
     [for (final j in jsonDecode(json) as List) Site.fromJson(j as Map<String, dynamic>)];
 
-Future<Position?> currentPosition() async {
+enum LocFail { serviceOff, denied, deniedForever, failed }
+
+/// Position or the reason there is none. Permission is asked first: the system prompt must appear
+/// even when the phone's location switch is off, otherwise the user is never asked.
+Future<(Position?, LocFail?)> locate() async {
   try {
-    if (!await Geolocator.isLocationServiceEnabled()) return null;
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) return null;
-    return await Geolocator.getCurrentPosition(
+    if (perm == LocationPermission.deniedForever) return (null, LocFail.deniedForever);
+    if (perm == LocationPermission.denied) return (null, LocFail.denied);
+    if (!await Geolocator.isLocationServiceEnabled()) return (null, LocFail.serviceOff);
+    final p = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(accuracy: LocationAccuracy.low, timeLimit: Duration(seconds: 10)));
+    return (p, null);
   } catch (_) {
-    return null;
+    return (null, LocFail.failed);
   }
 }
+
+/// Words and the button for each failure (wording per docs/ERROR_HANDLING.md section 8 style).
+(String, String) locFailText(LocFail f) => switch (f) {
+      LocFail.serviceOff => ('Location is turned off on this phone.', 'Turn on location'),
+      LocFail.denied => ('Location permission was declined.', 'Allow location'),
+      LocFail.deniedForever => ('Location permission is blocked for this app.', 'Open app settings'),
+      LocFail.failed => ("Couldn't get your location.", 'Try again'),
+    };
 
 class LobbyScreen extends StatefulWidget {
   final AppState s;
@@ -81,10 +96,11 @@ class LobbyScreen extends StatefulWidget {
   State<LobbyScreen> createState() => _LobbyScreenState();
 }
 
-class _LobbyScreenState extends State<LobbyScreen> {
+class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   List<Site> sites = [];
   final Map<String, bool> online = {}; // site url -> answered /api/status
   Position? pos;
+  LocFail? locFail;
   String note = 'Finding servers near you…';
   bool busy = true;
   String? error;
@@ -93,7 +109,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load(auto: widget.s.recent.isEmpty); // first launch only: auto-join the nearest
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Back from the phone's location or app settings: look again.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && locFail != null && !busy) _load(auto: widget.s.recent.isEmpty);
+  }
+
+  Future<void> _fixLocation() async {
+    switch (locFail) {
+      case LocFail.serviceOff:
+        await Geolocator.openLocationSettings();
+      case LocFail.deniedForever:
+        await Geolocator.openAppSettings();
+      default:
+        _load(auto: widget.s.recent.isEmpty);
+    }
   }
 
   double? _km(Site s) =>
@@ -105,7 +145,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       error = null;
       note = 'Finding servers near you…';
     });
-    pos = await currentPosition();
+    final (p, fail) = await locate();
+    pos = p;
+    locFail = fail;
     try {
       final body = await fetchDirectory();
       sites = parseDirectory(body);
@@ -117,7 +159,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
         error = 'Could not load the server list. Showing the last saved list.';
       } catch (_) {
         sites = [...widget.s.recent];
-        error = 'Could not load the server list. Showing recent servers.';
+        error = sites.isEmpty
+            ? 'Could not load the server list. Check your connection, or join by address below.'
+            : 'Could not load the server list. Showing recent servers.';
       }
     }
     sites.sort((a, b) => (_km(a) ?? double.infinity).compareTo(_km(b) ?? double.infinity));
@@ -131,7 +175,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
     setState(() {
       busy = false;
-      note = pos == null ? 'Location unavailable — pick a server.' : 'Servers near you';
+      note = pos == null ? 'Pick a server.' : 'Servers near you';
     });
     for (final site in sites) {
       ApiClient(site.url).status().then((_) => true, onError: (_) => false).then((ok) {
@@ -159,11 +203,20 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final recent = widget.s.recent.where((r) => !sites.any((s) => s.url == r.url)).toList();
     return Scaffold(
       appBar: AppBar(title: const Text('JAGA servers'), actions: [
-        IconButton(icon: const Icon(Icons.refresh), onPressed: busy ? null : () => _load(auto: false)),
+        ThemeToggle(widget.s),
+        IconButton(icon: const Icon(Icons.refresh), onPressed: busy ? null : () => _load(auto: widget.s.recent.isEmpty)),
       ]),
       body: ListView(padding: const EdgeInsets.all(12), children: [
         if (busy) const LinearProgressIndicator(),
         Padding(padding: const EdgeInsets.symmetric(vertical: 8), child: Text(note)),
+        if (locFail != null)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.location_off),
+              title: Text(locFailText(locFail!).$1),
+              trailing: TextButton(onPressed: busy ? null : _fixLocation, child: Text(locFailText(locFail!).$2)),
+            ),
+          ),
         if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
         for (final site in [...sites, ...recent]) _tile(site),
         const Divider(height: 32),

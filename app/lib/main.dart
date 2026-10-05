@@ -36,12 +36,32 @@ class JagaApp extends StatelessWidget {
   const JagaApp(this.state, {super.key});
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'JAGA',
-        theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
-        darkTheme: ThemeData(colorSchemeSeed: Colors.blue, brightness: Brightness.dark, useMaterial3: true),
-        home: Home(state),
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: state,
+        builder: (context, _) => MaterialApp(
+          title: 'JAGA',
+          theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
+          darkTheme: ThemeData(colorSchemeSeed: Colors.blue, brightness: Brightness.dark, useMaterial3: true),
+          themeMode: state.themeMode,
+          home: Home(state),
+        ),
       );
+}
+
+/// Flips between light and dark from whatever is showing now (including when the setting is "System").
+class ThemeToggle extends StatelessWidget {
+  final AppState s;
+  const ThemeToggle(this.s, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return IconButton(
+      tooltip: dark ? 'Switch to light mode' : 'Switch to dark mode',
+      icon: Icon(dark ? Icons.light_mode : Icons.dark_mode),
+      onPressed: () => s.setThemeMode(dark ? ThemeMode.light : ThemeMode.dark),
+    );
+  }
 }
 
 class Home extends StatefulWidget {
@@ -67,6 +87,7 @@ class _HomeState extends State<Home> {
           appBar: AppBar(
             title: Text(s.siteName),
             actions: [
+              ThemeToggle(s),
               Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: Center(
@@ -315,6 +336,16 @@ class _SettingsTabState extends State<_SettingsTab> {
             subtitle: Text(widget.s.host ?? ''),
             trailing: TextButton(onPressed: widget.s.leave, child: const Text('Switch server')),
           ),
+        ),
+        const SizedBox(height: 12),
+        SegmentedButton<ThemeMode>(
+          segments: const [
+            ButtonSegment(value: ThemeMode.system, label: Text('System'), icon: Icon(Icons.brightness_auto)),
+            ButtonSegment(value: ThemeMode.light, label: Text('Light'), icon: Icon(Icons.light_mode)),
+            ButtonSegment(value: ThemeMode.dark, label: Text('Dark'), icon: Icon(Icons.dark_mode)),
+          ],
+          selected: {widget.s.themeMode},
+          onSelectionChanged: (v) => widget.s.setThemeMode(v.first),
         ),
         const SizedBox(height: 12),
         _field('Warning at (mm)', warn),
