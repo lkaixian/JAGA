@@ -46,6 +46,8 @@ A second slave node is just a copy of the root project with `NODE_ID` set to `2`
 - **JSN-SR40T** runs in trigger/echo mode (not UART auto-stream). Its ECHO
   output is 5V logic and needs a voltage divider down to 3.3V before the
   ESP32's echo GPIO.
+- **JSN-SR40T blind zone:** it cannot read closer than about 25 cm. Mount it so the danger level
+  is at least 30 cm below the sensor, or the reading turns to garbage exactly when the water is highest.
 - **nRF24L01+** shares one SPI bus; on the master, the microSD card shares
   that same bus (separate CS line).
 - **DS1307** (optional) and the **SSD1306 OLED** (master only, optional)

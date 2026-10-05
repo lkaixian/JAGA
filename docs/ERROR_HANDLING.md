@@ -1,7 +1,8 @@
 # Error handling design
 
 Covers the slave and master firmware, the Python server, the dashboard and the Flutter app.
-Status: design only, nothing here is built yet. The build order is at the end.
+Status: phases P0 and P1 are built and committed; P2 is in progress. Firmware changes are written but
+not yet compiled (no ESP-IDF toolchain in the dev shell). The build order is at the end.
 
 ## 1. Principles
 
