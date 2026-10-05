@@ -27,7 +27,26 @@ void main() {
     expect(crossedIntoAlert(NodeStatus.alert, NodeStatus.alert), isFalse);
     expect(crossedIntoAlert(NodeStatus.alert, NodeStatus.normal), isFalse);
   });
+  healthTests();
   lobbyTests();
+}
+
+void healthTests() {
+  test('node health and link state', () {
+    Reading at(double t, [int level = 620]) => Reading(1, 1, level, null, null, null, receivedAt: t);
+    expect(nodeHealth(at(100), 110), NodeHealth.live);
+    expect(nodeHealth(at(100, -2147483648), 110), NodeHealth.fault);
+    expect(nodeHealth(at(100), 279.9), NodeHealth.live);
+    expect(nodeHealth(at(100), 280), NodeHealth.noSignal);
+    expect(nodeHealth(at(100, -2147483648), 280), NodeHealth.noSignal);
+    expect(nodeHealth(null, 280), NodeHealth.noData);
+    expect(Status.fromJson({'now_s': 1, 'uptime_s': 1, 'rtc_ok': true, 'sd_ok': true}).masterOk, isTrue);
+
+    expect(linkState(serverReachable: false, masterOk: false), LinkState.serverDown);
+    expect(linkState(serverReachable: false, masterOk: true), LinkState.serverDown);
+    expect(linkState(serverReachable: true, masterOk: false), LinkState.masterDown);
+    expect(linkState(serverReachable: true, masterOk: true), LinkState.connected);
+  });
 }
 
 void lobbyTests() {

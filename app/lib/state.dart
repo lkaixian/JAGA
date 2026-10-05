@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,7 +16,7 @@ const maxPoints = 90;
 bool crossedIntoAlert(NodeStatus? prev, NodeStatus next) =>
     next == NodeStatus.alert && prev != NodeStatus.alert;
 
-class AppState extends ChangeNotifier {
+class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final SharedPreferences _prefs;
   final _notifier = FlutterLocalNotificationsPlugin();
   ApiClient? _apiClient;
@@ -31,7 +32,9 @@ class AppState extends ChangeNotifier {
   final Map<int, List<Reading>> history = {1: [], 2: [], 3: []}; // oldest first
   Status? serverStatus;
   DateTime? lastOk;
-  bool online = false;
+  LinkState link = LinkState.connected;
+  int _fails = 0;
+  bool _paused = false;
   bool _historyLoaded = false;
   final Map<int, NodeStatus> _lastStatus = {};
 
@@ -54,21 +57,45 @@ class AppState extends ChangeNotifier {
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
 
+    WidgetsBinding.instance.addObserver(this);
     if (host != null) _start();
   }
 
   void _start() {
     _apiClient = ApiClient(host!);
+    _fails = 0;
     poll();
+  }
+
+  /// One-shot timer: 10 s when healthy, 10/20/30 s (cap) after failures.
+  void _schedule() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 10), (_) => poll());
+    if (host == null || _paused) return;
+    _timer = Timer(Duration(seconds: 10 * min(max(_fails, 1), 3)), poll);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      _paused = true;
+      _timer?.cancel();
+    } else if (state == AppLifecycleState.resumed && _paused) {
+      _paused = false;
+      if (host != null) poll();
+    }
+  }
+
+  /// When the master's last reading arrived, for the banner.
+  DateTime? get masterLastAt {
+    final a = serverStatus?.masterAgeS;
+    return lastOk == null || a == null ? lastOk : lastOk!.subtract(Duration(seconds: a));
   }
 
   void _reset() {
     nodes = [];
     history.updateAll((_, _) => []);
     serverStatus = null;
-    online = false;
+    link = LinkState.connected;
     _historyLoaded = false;
     _lastStatus.clear();
   }
@@ -103,6 +130,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
@@ -143,13 +171,16 @@ class AppState extends ChangeNotifier {
         list.add(r);
         if (list.length > maxPoints) list.removeAt(0);
       }
-      online = true;
+      _fails = 0;
+      link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk);
       lastOk = DateTime.now();
       _checkAlerts();
     } catch (_) {
-      online = false; // keep the last data on screen
+      _fails++;
+      link = LinkState.serverDown; // keep the last data on screen
     }
     notifyListeners();
+    _schedule();
   }
 
   void _checkAlerts() {

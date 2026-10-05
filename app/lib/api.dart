@@ -7,6 +7,26 @@ const _dhtErr = -999; // DHT22 read failed
 
 enum NodeStatus { normal, watch, alert, error }
 
+/// Where the break is (docs/ERROR_HANDLING.md section 2).
+enum LinkState { connected, masterDown, serverDown }
+
+enum NodeHealth { live, fault, noSignal, noData }
+
+const staleS = 180;
+
+/// Server unreachable beats master unreachable beats connected.
+LinkState linkState({required bool serverReachable, required bool masterOk}) =>
+    !serverReachable ? LinkState.serverDown : (!masterOk ? LinkState.masterDown : LinkState.connected);
+
+/// [nowS] is Unix time in seconds (the device clock), the same scale as [Reading.receivedAt];
+/// the master's own now_s is not. Silence wins over a fault.
+NodeHealth nodeHealth(Reading? r, num? nowS) {
+  if (r == null) return NodeHealth.noData;
+  final age = (r.receivedAt == null || nowS == null) ? 0 : nowS - r.receivedAt!;
+  if (age >= staleS) return NodeHealth.noSignal;
+  return r.sonarOk ? NodeHealth.live : NodeHealth.fault;
+}
+
 class Node {
   final int id;
   final String name;
@@ -20,7 +40,9 @@ class Reading {
   final int logTs, nodeId, levelMm;
   final double? tempC, humidityPct;
   final int? distanceMm;
-  Reading(this.logTs, this.nodeId, this.levelMm, this.tempC, this.humidityPct, this.distanceMm);
+  final double? receivedAt; // server unix seconds
+  Reading(this.logTs, this.nodeId, this.levelMm, this.tempC, this.humidityPct, this.distanceMm,
+      {this.receivedAt});
 
   bool get sonarOk => levelMm != _sonarErr;
 
@@ -28,7 +50,8 @@ class Reading {
     double? dht(num v) => v == _dhtErr ? null : v.toDouble();
     final level = j['water_level_mm'] as int;
     return Reading(j['log_timestamp_s'], j['node_id'], level, dht(j['temperature_c']),
-        dht(j['humidity_pct']), level == _sonarErr ? null : j['distance_mm']);
+        dht(j['humidity_pct']), level == _sonarErr ? null : j['distance_mm'],
+        receivedAt: (j['received_at'] as num?)?.toDouble());
   }
 
   NodeStatus status(double warnMm, double dangerMm) {
@@ -41,10 +64,11 @@ class Reading {
 
 class Status {
   final int nowS, uptimeS;
-  final bool rtcOk, sdOk;
-  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk);
-  factory Status.fromJson(Map<String, dynamic> j) =>
-      Status(j['now_s'], j['uptime_s'], j['rtc_ok'], j['sd_ok']);
+  final bool rtcOk, sdOk, masterOk; // masterOk is absent when talking to the master directly
+  final int? masterAgeS;
+  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk, [this.masterOk = true, this.masterAgeS]);
+  factory Status.fromJson(Map<String, dynamic> j) => Status(j['now_s'], j['uptime_s'], j['rtc_ok'],
+      j['sd_ok'], j['master_ok'] ?? true, (j['master_age_s'] as num?)?.toInt());
 }
 
 class ApiClient {

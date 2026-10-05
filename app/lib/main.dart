@@ -17,7 +17,7 @@ const _statusLabels = {
   NodeStatus.normal: 'Normal',
   NodeStatus.watch: 'Watch',
   NodeStatus.alert: 'Alert',
-  NodeStatus.error: 'Sensor error',
+  NodeStatus.error: 'Sensor fault',
 };
 
 void main() async {
@@ -57,6 +57,7 @@ class _HomeState extends State<Home> {
       listenable: s,
       builder: (context, _) {
         if (s.host == null) return LobbyScreen(s);
+        final live = s.link == LinkState.connected && s.lastOk != null;
         final pages = [_StatusTab(s), _HistoryTab(s), _MapTab(s), _SettingsTab(s)];
         return Scaffold(
           appBar: AppBar(
@@ -66,10 +67,10 @@ class _HomeState extends State<Home> {
                 padding: const EdgeInsets.only(right: 16),
                 child: Center(
                   child: Text(
-                    s.online
+                    live
                         ? 'Live · ${_hms(s.lastOk!)}'
                         : 'Offline${s.lastOk == null ? '' : ' · last ${_hms(s.lastOk!)}'}',
-                    style: TextStyle(color: s.online ? _statusColors[NodeStatus.normal] : _statusColors[NodeStatus.alert]),
+                    style: TextStyle(color: live ? _statusColors[NodeStatus.normal] : _statusColors[NodeStatus.alert]),
                   ),
                 ),
               ),
@@ -93,6 +94,7 @@ class _HomeState extends State<Home> {
 }
 
 String _hms(DateTime t) => t.toIso8601String().substring(11, 19);
+String _hm(DateTime t) => _hms(t).substring(0, 5);
 
 String _age(int? s) {
   if (s == null) return '';
@@ -108,9 +110,32 @@ class _StatusTab extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          if (s.link != LinkState.connected) _LinkBanner(s),
           for (final id in s.history.keys) _NodeCard(s, id),
         ],
       );
+}
+
+class _LinkBanner extends StatelessWidget {
+  final AppState s;
+  const _LinkBanner(this.s);
+
+  @override
+  Widget build(BuildContext context) {
+    final down = s.link == LinkState.serverDown;
+    final at = down ? s.lastOk : s.masterLastAt;
+    final text = down
+        ? "Can't reach the server.${at == null ? '' : ' Showing data from ${_hm(at)}.'}"
+        : "The server can't reach the master node.${at == null ? '' : ' Readings stopped at ${_hm(at)}.'}";
+    final c = Theme.of(context).colorScheme;
+    return Card(
+      color: down ? c.errorContainer : c.tertiaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(text, style: TextStyle(color: down ? c.onErrorContainer : c.onTertiaryContainer)),
+      ),
+    );
+  }
 }
 
 class _NodeCard extends StatelessWidget {
@@ -123,7 +148,15 @@ class _NodeCard extends StatelessWidget {
     final r = s.latestOf(id);
     final name = s.nodeById(id)?.name ?? 'Node $id';
     final st = r?.status(s.warnMm, s.dangerMm);
-    return Card(
+    final nowS = DateTime.now().millisecondsSinceEpoch / 1000; // receivedAt is Unix time; the master's now_s is not
+    final health = nodeHealth(r, nowS);
+    final note = switch (health) {
+      NodeHealth.fault => "$name's water sensor isn't reading. Check the sonar wiring.",
+      NodeHealth.noSignal =>
+        "$name hasn't reported for ${((nowS - r!.receivedAt!) / 60).floor()} min.${r.sonarOk ? ' Last level ${(r.levelMm / 1000).toStringAsFixed(2)} m.' : ''}",
+      _ => null,
+    };
+    final card = Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -143,11 +176,13 @@ class _NodeCard extends StatelessWidget {
               r.humidityPct == null ? 'humidity —' : '${r.humidityPct!.toStringAsFixed(0)} %',
               r.distanceMm == null ? 'distance —' : '${r.distanceMm} mm',
             ].join('  ·  ')),
+            if (note != null) Text(note, style: TextStyle(color: Theme.of(context).colorScheme.error)),
             Text('node $id · logged ${_age(s.ageS(id))}', style: Theme.of(context).textTheme.bodySmall),
           ],
         ]),
       ),
     );
+    return health == NodeHealth.noSignal ? Opacity(opacity: 0.6, child: card) : card;
   }
 }
 
