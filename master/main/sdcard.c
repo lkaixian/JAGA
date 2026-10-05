@@ -5,6 +5,8 @@
 #include "driver/sdspi_host.h"
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "SDCARD_DRIVER";
 static sdmmc_card_t *s_card = NULL;
@@ -23,7 +25,13 @@ esp_err_t sdcard_init(spi_host_device_t host, gpio_num_t cs_pin) {
         .allocation_unit_size = 16 * 1024,
     };
 
-    esp_err_t err = esp_vfs_fat_sdspi_mount("/sdcard", &host_config, &slot_config, &mount_config, &s_card);
+    // Card init is flaky on a marginal supply/contact (err 0x107 = no reply to
+    // ACMD41), so give it a few tries before giving up.
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < 3 && err != ESP_OK; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(500));
+        err = esp_vfs_fat_sdspi_mount("/sdcard", &host_config, &slot_config, &mount_config, &s_card);
+    }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "SD card mount failed on GPIO%d CS (err 0x%x) - is a card inserted?", cs_pin, err);
         s_card = NULL;

@@ -16,3 +16,4 @@
 // own spec ceiling; override with a smaller value if this node's tank/mount
 // height is known to be shorter than that.
 #define SONAR_MAX_RANGE_MM      JSNSR40T_DEFAULT_MAX_RANGE_MM
+

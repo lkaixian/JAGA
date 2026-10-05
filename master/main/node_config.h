@@ -20,3 +20,8 @@
 // The OLED is a demo/debug aid. Set to 0 for real deployment - skips the
 // I2C probe and all display writes, saving its draw on battery/solar power.
 #define OLED_ENABLED 1
+
+// Wi-Fi the master joins to serve /api/* (see api.c) to the dashboard and
+// the Flutter app. TODO: point this at the real deployment network.
+#define WIFI_SSID  "CHANGE_ME"
+#define WIFI_PASS  "CHANGE_ME"

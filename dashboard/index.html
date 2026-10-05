@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JAGA Monitor</title>
+<style>
+  :root{
+    color-scheme: light;
+    --surface:    #fcfcfb;
+    --plane:      #f9f9f7;
+    --ink:        #0b0b0b;
+    --ink-2:      #52514e;
+    --ink-muted:  #898781;
+    --grid:       #e1e0d9;
+    --baseline:   #c3c2b7;
+    --border:     rgba(11,11,11,0.10);
+    --card-bg:    #ffffff;
+
+    --node1: #2a78d6; /* Slave 1 */
+    --node2: #eb6834; /* Slave 2 */
+    --node3: #1baf7a; /* Master  */
+
+    --good:     #0ca30c;
+    --warning:  #fab219;
+    --critical: #d03b3b;
+    --good-bg:     rgba(12,163,12,0.12);
+    --warning-bg:  rgba(250,178,25,0.16);
+    --critical-bg: rgba(208,59,59,0.13);
+
+    --water:      #9cc3ec;
+    --water-fill: rgba(156,195,236,0.30);
+    --land-fill:  rgba(12,163,12,0.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      color-scheme: dark;
+      --surface:   #1a1a19;
+      --plane:     #0d0d0d;
+      --ink:       #ffffff;
+      --ink-2:     #c3c2b7;
+      --ink-muted: #898781;
+      --grid:      #2c2c2a;
+      --baseline:  #383835;
+      --border:    rgba(255,255,255,0.10);
+      --card-bg:   #232322;
+
+      --node1: #3987e5;
+      --node2: #d95926;
+      --node3: #199e70;
+
+      --good:     #0ca30c;
+      --warning:  #fab219;
+      --critical: #e66767;
+      --good-bg:     rgba(12,163,12,0.16);
+      --warning-bg:  rgba(250,178,25,0.14);
+      --critical-bg: rgba(230,103,103,0.16);
+
+      --water:      #3a6690;
+      --water-fill: rgba(58,102,144,0.35);
+      --land-fill:  rgba(12,163,12,0.08);
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --surface:   #1a1a19;
+    --plane:     #0d0d0d;
+    --ink:       #ffffff;
+    --ink-2:     #c3c2b7;
+    --ink-muted: #898781;
+    --grid:      #2c2c2a;
+    --baseline:  #383835;
+    --border:    rgba(255,255,255,0.10);
+    --card-bg:   #232322;
+
+    --node1: #3987e5;
+    --node2: #d95926;
+    --node3: #199e70;
+
+    --good:     #0ca30c;
+    --warning:  #fab219;
+    --critical: #e66767;
+    --good-bg:     rgba(12,163,12,0.16);
+    --warning-bg:  rgba(250,178,25,0.14);
+    --critical-bg: rgba(230,103,103,0.16);
+
+    --water:      #3a6690;
+    --water-fill: rgba(58,102,144,0.35);
+    --land-fill:  rgba(12,163,12,0.08);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--plane);
+    color:var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .mono{ font-family: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  .wrap{ max-width: 1080px; margin: 0 auto; padding: 0 16px 48px; }
+
+  header.top{
+    position: sticky; top: 0;
+    z-index: 5;
+    background: var(--plane);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px;
+    display:flex; align-items:center; justify-content:space-between; gap: 12px;
+    flex-wrap: wrap;
+  }
+  header.top .id{ display:flex; align-items:baseline; gap:10px; }
+  header.top h1{ margin:0; font-size:19px; letter-spacing:0.02em; }
+  header.top .sub{ font-size:12px; color:var(--ink-muted); }
+  .feed-badge{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:11px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase;
+    padding:5px 10px; border-radius:99px;
+    background:var(--warning-bg); color: color-mix(in srgb, var(--warning) 70%, var(--ink));
+    border:1px solid var(--border);
+  }
+  .feed-badge .dot{ width:6px; height:6px; border-radius:50%; background:var(--warning); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+  @media (prefers-reduced-motion: reduce){ .feed-badge .dot{ animation:none; } }
+  .clock{ font-size:12px; color:var(--ink-muted); }
+
+  .btn{
+    font: inherit; font-size:12px; font-weight:600; color:var(--ink);
+    background:var(--card-bg); border:1px solid var(--border); border-radius:8px;
+    padding:6px 12px; cursor:pointer;
+  }
+  .btn:hover{ background:var(--plane); }
+  .btn.primary{ background:var(--ink); color:var(--surface); border-color:var(--ink); }
+  .btn.primary:hover{ opacity:0.9; }
+
+  dialog#settings{
+    width:min(560px, calc(100vw - 32px)); max-height:min(640px, calc(100vh - 64px));
+    border:1px solid var(--border); border-radius:12px; padding:0;
+    background:var(--card-bg); color:var(--ink);
+  }
+  dialog#settings::backdrop{ background:rgba(0,0,0,0.45); }
+  dialog#settings form{ display:flex; flex-direction:column; max-height:inherit; }
+  dialog#settings .dlg-head{ padding:16px 20px; border-bottom:1px solid var(--border); }
+  dialog#settings .dlg-head h3{ margin:0 0 3px; font-size:15px; }
+  dialog#settings .dlg-head p{ margin:0; font-size:11.5px; color:var(--ink-muted); }
+  dialog#settings .dlg-body{ padding:16px 20px; overflow-y:auto; display:flex; flex-direction:column; gap:16px; }
+  dialog#settings .dlg-foot{ padding:14px 20px; border-top:1px solid var(--border); display:flex; justify-content:space-between; gap:8px; }
+  .node-fields{ border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .node-fields legend{ font-size:11px; font-weight:700; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.03em; padding:0 4px; }
+  .field-row{ display:grid; grid-template-columns: repeat(2, 1fr); gap:8px; margin-top:8px; }
+  .field-row:first-of-type{ margin-top:0; }
+  @media (max-width:520px){ .field-row{ grid-template-columns: 1fr 1fr; } }
+  .field-row label{ display:flex; flex-direction:column; gap:3px; font-size:10.5px; color:var(--ink-muted); }
+  .field-row input{
+    font: inherit; font-size:12.5px; color:var(--ink); background:var(--plane);
+    border:1px solid var(--border); border-radius:6px; padding:5px 7px; width:100%;
+  }
+  .thresh-row{ display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }
+  @media (max-width:520px){ .thresh-row{ grid-template-columns: 1fr; } }
+
+  section{ padding-top: 22px; }
+  h2{ font-size:13px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-muted); margin: 0 0 10px; font-weight:600; }
+
+  .cards{ display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+  @media (max-width:700px){ .cards{ grid-template-columns: 1fr; } }
+  .card{
+    background:var(--card-bg); border:1px solid var(--border); border-radius:10px;
+    padding:14px 16px;
+    border-left: 3px solid var(--node-color);
+  }
+  .card .row1{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .card .name{ font-weight:600; font-size:14px; display:flex; align-items:center; gap:7px; }
+  .card .swatch{ width:9px; height:9px; border-radius:50%; background:var(--node-color); flex:none; }
+  .pill{
+    font-size:11px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase;
+    padding:3px 8px; border-radius:99px; display:inline-flex; align-items:center; gap:5px;
+  }
+  .pill.good{ background:var(--good-bg); color: var(--good); }
+  .pill.warning{ background:var(--warning-bg); color: color-mix(in srgb, var(--warning) 65%, var(--ink)); }
+  .pill.critical{ background:var(--critical-bg); color: var(--critical); }
+  .pill::before{ content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+
+  .card .level{ font-size:30px; font-weight:600; margin-top:10px; line-height:1; }
+  .card .level small{ font-size:14px; font-weight:500; color:var(--ink-muted); }
+  .card .meta{ display:flex; gap:16px; margin-top:12px; font-size:12px; color:var(--ink-2); }
+  .card .meta div b{ display:block; color:var(--ink); font-size:13px; font-weight:600; }
+  .card .age{ margin-top:10px; font-size:11px; color:var(--ink-muted); }
+  .card .loc{ margin-top:2px; font-size:11px; color:var(--ink-muted); }
+
+  .map-card{
+    background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:16px;
+  }
+  .map-card .map-head{ display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .map-card .map-title{ font-size:13px; font-weight:600; }
+  .map-card .map-sub{ font-size:11.5px; color:var(--ink-muted); }
+  .map-box{ height:340px; border-radius:8px; overflow:hidden; background:var(--card-bg); color:var(--ink-muted); font-size:13px; }
+  .pin-group{ cursor:default; }
+  .pin-group .pin-label{ font-size:11px; font-weight:600; }
+  .pin-group .pin-coord{ font-size:9.5px; font-variant-numeric: tabular-nums; }
+  .pin-group:hover .pin-shape{ transform: translateY(-2px); }
+  .pin-shape{ transition: transform 0.15s ease; }
+
+  .chart-card{
+    background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:16px;
+  }
+  .legend{ display:flex; gap:18px; flex-wrap:wrap; margin-bottom:6px; font-size:12px; color:var(--ink-2); }
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .legend i{ width:14px; height:2px; border-radius:2px; display:inline-block; }
+  .chart-svg{ width:100%; height:auto; display:block; overflow: visible; }
+  .chart-wrap{ position:relative; }
+  .tooltip{
+    position:absolute; pointer-events:none; background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; font-size:11px; box-shadow:0 4px 14px rgba(0,0,0,0.18);
+    min-width:150px; visibility:hidden; z-index:4;
+  }
+  .tooltip .t-time{ color:var(--ink-muted); margin-bottom:5px; }
+  .tooltip .t-row{ display:flex; justify-content:space-between; gap:10px; }
+  .tooltip .t-row + .t-row{ margin-top:3px; }
+  .tooltip .t-row .dot{ width:7px; height:7px; border-radius:50%; display:inline-block; margin-right:5px; }
+
+  table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  .table-wrap{ overflow-x:auto; border:1px solid var(--border); border-radius:10px; }
+  th,td{ padding:8px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--grid); }
+  th:first-child, td:first-child{ text-align:left; }
+  th:nth-child(2), td:nth-child(2){ text-align:left; }
+  th{ text-align:right; color:var(--ink-muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.03em; background:var(--card-bg); position:sticky; top:0; }
+  tbody tr:last-child td{ border-bottom:none; }
+  tbody tr:hover{ background: var(--plane); }
+  td.err{ color:var(--critical); font-weight:600; }
+  .node-tag{ display:inline-flex; align-items:center; gap:6px; }
+  .node-tag i{ width:7px; height:7px; border-radius:50%; display:inline-block; }
+
+  footer{ margin-top:28px; font-size:11.5px; color:var(--ink-muted); line-height:1.6; border-top:1px solid var(--border); padding-top:14px; padding-bottom:14px; }
+  footer code{ font-family: ui-monospace, monospace; background:var(--card-bg); padding:1px 5px; border-radius:4px; border:1px solid var(--border); }
+</style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="river.js"></script>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="id">
+      <h1>J.A.G.A</h1>
+      <span class="sub">Water Level Monitoring Network</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="clock mono" id="clock">--:--:--</span>
+      <span class="feed-badge" id="feedBadge"><span class="dot"></span><span id="feedText">Connecting&hellip;</span></span>
+      <button type="button" class="btn" id="settingsBtn">Settings</button>
+    </div>
+  </header>
+
+  <dialog id="settings">
+    <form id="settingsForm" method="dialog">
+      <div class="dlg-head">
+        <h3>Dashboard settings</h3>
+        <p>Master API address, per-node names, the water-level thresholds, and node positions (positions are saved on the server; the rest in this browser).</p>
+      </div>
+      <div class="dlg-body" id="settingsBody">
+        <!-- node fieldsets injected by buildNodeFieldsets() -->
+        <fieldset class="node-fields">
+          <legend>Master API</legend>
+          <label>Base URL<input type="text" id="f-api" placeholder="http://jaga-master.local"></label>
+        </fieldset>
+        <fieldset class="node-fields">
+          <legend>Thresholds (mm above the drain floor)</legend>
+          <div class="thresh-row">
+            <label>Mount height<input type="number" step="1" id="f-mount"></label>
+            <label>Warning at<input type="number" step="1" id="f-warn"></label>
+            <label>Danger at<input type="number" step="1" id="f-danger"></label>
+          </div>
+        </fieldset>
+      </div>
+      <div class="dlg-foot">
+        <button type="button" class="btn" id="settingsReset">Reset to defaults</button>
+        <div style="display:flex; gap:8px;">
+          <button type="button" class="btn" id="settingsCancel">Cancel</button>
+          <button type="submit" class="btn primary" id="settingsSave">Save</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <section>
+    <h2>Nodes</h2>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section>
+    <h2>Node placement</h2>
+    <div class="map-card">
+      <div class="map-head">
+        <span class="map-title">Sungai Parit Raja &middot; UTHM Parit Raja campus</span>
+        <span class="map-sub">Drag a pin to move it &middot; ring = status &middot; bold blue = OSM rivers/canals</span>
+      </div>
+      <div class="map-box" id="map" role="img" aria-label="Map of the three node locations near UTHM Parit Raja"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Water level — last 90 readings</h2>
+    <div class="chart-card">
+      <div class="legend" id="legend"></div>
+      <div class="chart-wrap">
+        <svg class="chart-svg" id="chart" viewBox="0 0 960 320" preserveAspectRatio="none" role="img" aria-label="Water level over time for three nodes"></svg>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Trend &mdash; last 30 min</h2>
+    <div class="table-wrap" id="trendWrap">
+      <table>
+        <thead><tr><th>Node</th><th>Direction</th><th>Rate</th><th>To warning</th><th>To danger</th></tr></thead>
+        <tbody id="trendBody" class="mono"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recent readings — /sdcard/telem.csv</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>log_timestamp_s</th><th>node_id</th><th>sender_timestamp_s</th>
+            <th>temperature_c</th><th>humidity_pct</th><th>distance_mm</th>
+            <th>distance_stddev_mm</th><th>water_level_mm</th>
+          </tr>
+        </thead>
+        <tbody id="tbody" class="mono"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Live dashboard for the JAGA master node, served by nginx with a Python/SQLite service in between (<code>server/</code>);
+    the trend table is a least-squares fit from <code>server/trend.py</code>. Data comes from <code>GET /api/status</code>, <code>/api/nodes</code>,
+    <code>/api/latest</code> and <code>/api/history?node=1-3</code> (see <code>master/main/api.c</code>), polled every 10s.
+    Water level is <code>SONAR_MOUNT_HEIGHT_MM &minus; vertical distance</code> per <code>node_config.h</code>; the
+    warning/danger lines (700mm / 900mm) are placeholder thresholds &mdash; the firmware defines no alarm levels.
+    Node positions are saved on the server (drag a pin, or Settings); the master's <code>NODE_META</code> values are only defaults. River lines are OpenStreetMap data (&copy; OpenStreetMap contributors, ODbL).
+    Open this page from <code>file://</code> or plain <code>http://</code>: an HTTPS host blocks requests to the
+    master's plain-HTTP API (mixed content). If <code>.local</code> doesn't resolve, use the IP the master logs on
+    its serial console ("Got IP").
+  </footer>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  // lat/lng are fallbacks until /api/nodes answers
+  var NODES = [
+    { id:1, name:"Slave 1", color:"var(--node1)", hex:null, loc:"Upstream",   lat:1.8710, lng:103.0790 },
+    { id:2, name:"Slave 2", color:"var(--node2)", hex:null, loc:"Midstream",  lat:1.8656, lng:103.0850 },
+    { id:3, name:"Master",  color:"var(--node3)", hex:null, loc:"Downstream", lat:1.8620, lng:103.0900 }
+  ];
+  var MOUNT_MM = 1000, WARN_MM = 700, DANGER_MM = 900, MAX_POINTS = 90;
+  var ERR = -2147483648; // INT32_MIN sentinel from telemetry_packet_t
+
+  var SETTINGS_KEY = "jaga-dashboard-settings";
+  var DEFAULTS = {
+    nodes: NODES.map(function(n){ return { id:n.id, name:n.name, loc:n.loc }; }),
+    mount: MOUNT_MM, warn: WARN_MM, danger: DANGER_MM,
+    api: /^https?:/.test(location.protocol) ? location.origin : "http://jaga-master.local"
+  };
+  var API = DEFAULTS.api;
+
+  function loadSettings(){
+    var saved;
+    try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY)); } catch (e) { saved = null; }
+    if (!saved) return;
+    if (Array.isArray(saved.nodes)) {
+      saved.nodes.forEach(function(sn){
+        var n = NODES.filter(function(x){ return x.id === sn.id; })[0];
+        if (!n) return;
+        if (typeof sn.name === "string" && sn.name.trim()) n.name = sn.name.trim();
+        if (typeof sn.loc === "string" && sn.loc.trim()) n.loc = sn.loc.trim();
+      });
+    }
+    if (isFinite(saved.mount) && saved.mount > 0) MOUNT_MM = saved.mount;
+    if (isFinite(saved.warn)) WARN_MM = saved.warn;
+    if (isFinite(saved.danger)) DANGER_MM = saved.danger;
+    if (typeof saved.api === "string" && saved.api.trim()) API = saved.api.trim().replace(/\/+$/, "");
+  }
+  function saveSettings(){
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        nodes: NODES.map(function(n){ return { id:n.id, name:n.name, loc:n.loc }; }),
+        mount: MOUNT_MM, warn: WARN_MM, danger: DANGER_MM, api: API
+      }));
+    } catch (e) { /* private browsing / storage disabled - settings just won't persist */ }
+  }
+  loadSettings();
+
+  function resolve(varExpr){
+    var name = varExpr.slice(4,-1);
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  NODES.forEach(function(n){ n.hex = resolve(n.color); });
+
+  var state = {}; // node_id -> array of readings, oldest first
+  NODES.forEach(function(n){ state[n.id] = []; });
+  var serverNow = null, polledAt = 0; // status.now_s and the Date.now() it arrived at
+
+  // API row -> dashboard reading. -999 = DHT22 failed, INT32_MIN = sonar failed.
+  function toReading(j){
+    var bad = j.water_level_mm === ERR;
+    return {
+      log_ts: j.log_timestamp_s, node_id: j.node_id, sender_ts: j.sender_timestamp_s,
+      temp: j.temperature_c === -999 ? null : j.temperature_c,
+      humidity: j.humidity_pct === -999 ? null : j.humidity_pct,
+      distance: bad ? null : j.distance_mm,
+      stddev: bad ? null : j.distance_stddev_mm,
+      level: j.water_level_mm
+    };
+  }
+
+  function addReading(r){
+    var arr = state[r.node_id];
+    if (!arr) return;
+    if (arr.length && r.log_ts <= arr[arr.length-1].log_ts) return; // already have it
+    arr.push(r);
+    if (arr.length > MAX_POINTS) arr.shift();
+  }
+
+  function getJSON(path){
+    var ctl = new AbortController();
+    var t = setTimeout(function(){ ctl.abort(); }, 5000);
+    return fetch(API + path, { signal: ctl.signal }).then(function(res){
+      if (!res.ok) throw new Error(res.status);
+      return res.json();
+    }).finally(function(){ clearTimeout(t); });
+  }
+
+  function setFeed(live){
+    var b = document.getElementById("feedBadge");
+    b.firstChild.style.background = live ? "var(--good)" : "var(--critical)";
+    var last = polledAt ? new Date(polledAt).toTimeString().slice(0,8) : "";
+    document.getElementById("feedText").textContent = live ? "Live \u00b7 " + last : "Offline" + (last ? " \u00b7 last " + last : "");
+  }
+
+  var nodesLoaded = false, historyLoaded = false;
+  function poll(){
+    var jobs = [];
+    if (!nodesLoaded) jobs.push(getJSON("/api/nodes").then(function(list){
+      list.forEach(function(j){
+        var n = NODES.filter(function(x){ return x.id === j.node_id; })[0];
+        if (n) { n.lat = j.lat; n.lng = j.lng; }
+      });
+      nodesLoaded = true;
+    }));
+    if (!historyLoaded) jobs.push(Promise.all(NODES.map(function(n){
+      return getJSON("/api/history?node="+n.id).then(function(rows){
+        rows.reverse().forEach(function(j){ addReading(toReading(j)); }); // API is newest first
+      });
+    })).then(function(){ historyLoaded = true; }));
+    jobs.push(getJSON("/api/status").then(function(st){ serverNow = st.now_s; polledAt = Date.now(); }));
+    jobs.push(getJSON("/api/latest").then(function(rows){ rows.forEach(function(j){ addReading(toReading(j)); }); }));
+    // optional: absent when talking to the master directly
+    jobs.push(getJSON("/api/trend?warn="+WARN_MM+"&danger="+DANGER_MM).then(function(t){ trendData = t; }, function(){ trendData = null; }));
+    // a failed nodes/history fetch leaves its flag false, so the next poll retries it
+    return Promise.all(jobs).then(function(){ setFeed(true); }, function(){ setFeed(false); }).then(render);
+  }
+
+  function statusFor(level){
+    if (level === ERR) return "critical";
+    if (level >= DANGER_MM) return "critical";
+    if (level >= WARN_MM) return "warning";
+    return "good";
+  }
+  function statusLabel(s){ return s === "critical" ? "Alert" : s === "warning" ? "Watch" : "Normal"; }
+
+  function fmtAge(sec){
+    if (serverNow == null) return "";
+    var d = Math.max(0, Math.floor(serverNow + (Date.now()-polledAt)/1000) - sec);
+    if (d < 60) return d + "s ago";
+    if (d < 3600) return Math.floor(d/60) + "m ago";
+    return Math.floor(d/3600) + "h ago";
+  }
+  function fmtClock(sec){
+    var d = new Date(sec*1000);
+    return d.toTimeString().slice(0,8);
+  }
+
+  var cardsEl = document.getElementById("cards");
+  var legendEl = document.getElementById("legend");
+  var tbodyEl = document.getElementById("tbody");
+  var svg = document.getElementById("chart");
+  var tooltip = document.getElementById("tooltip");
+  var NS = "http://www.w3.org/2000/svg";
+
+  legendEl.innerHTML = NODES.map(function(n){
+    return '<span><i style="background:'+n.hex+'"></i>'+n.name+' &middot; node '+n.id+'</span>';
+  }).join("");
+
+  function renderCards(){
+    cardsEl.innerHTML = NODES.map(function(n){
+      var arr = state[n.id], r = arr[arr.length-1];
+      if (!r) return (
+        '<div class="card" style="--node-color:'+n.hex+'">'+
+          '<div class="row1"><span class="name"><span class="swatch"></span>'+n.name+'</span></div>'+
+          '<div class="loc">'+n.loc+' &middot; '+n.lat.toFixed(4)+'&deg;N '+n.lng.toFixed(4)+'&deg;E</div>'+
+          '<div class="level">&mdash;</div>'+
+          '<div class="age">node '+n.id+' &middot; no data yet</div>'+
+        '</div>');
+      var s = statusFor(r.level);
+      var levelText = r.level === ERR ? "&mdash;" : (r.level/1000).toFixed(2);
+      return (
+        '<div class="card" style="--node-color:'+n.hex+'">'+
+          '<div class="row1">'+
+            '<span class="name"><span class="swatch"></span>'+n.name+'</span>'+
+            '<span class="pill '+s+'">'+(r.level===ERR?'Sensor error':statusLabel(s))+'</span>'+
+          '</div>'+
+          '<div class="loc">'+n.loc+' &middot; '+n.lat.toFixed(4)+'&deg;N '+n.lng.toFixed(4)+'&deg;E</div>'+
+          '<div class="level">'+levelText+(r.level===ERR?'':'<small> m</small>')+'</div>'+
+          '<div class="meta">'+
+            '<div><b>'+(r.temp!=null?r.temp.toFixed(1)+'&deg;C':'&mdash;')+'</b>temp</div>'+
+            '<div><b>'+(r.humidity!=null?r.humidity.toFixed(0)+'%':'&mdash;')+'</b>humidity</div>'+
+            '<div><b>'+(r.distance!=null?r.distance+' mm':'&mdash;')+'</b>distance</div>'+
+          '</div>'+
+          '<div class="age">node '+n.id+' &middot; logged '+fmtAge(r.log_ts)+'</div>'+
+        '</div>'
+      );
+    }).join("");
+  }
+
+  function renderTable(){
+    var rows = [];
+    NODES.forEach(function(n){ state[n.id].forEach(function(r){ rows.push(r); }); });
+    rows.sort(function(a,b){ return b.log_ts - a.log_ts; });
+    rows = rows.slice(0, 18);
+    tbodyEl.innerHTML = rows.map(function(r){
+      var n = NODES[r.node_id-1];
+      var levelCell = r.level===ERR ? '<td class="err">sensor error</td>' : '<td>'+r.level+'</td>';
+      return (
+        '<tr>'+
+          '<td>'+r.log_ts+'</td>'+
+          '<td><span class="node-tag"><i style="background:'+n.hex+'"></i>'+r.node_id+'</span></td>'+
+          '<td>'+r.sender_ts+'</td>'+
+          '<td>'+(r.temp!=null?r.temp.toFixed(2):'')+'</td>'+
+          '<td>'+(r.humidity!=null?r.humidity.toFixed(1):'')+'</td>'+
+          '<td>'+(r.distance!=null?r.distance:'')+'</td>'+
+          '<td>'+(r.stddev!=null?r.stddev:'')+'</td>'+
+          levelCell+
+        '</tr>'
+      );
+    }).join("");
+  }
+
+  var leafMap = null, pins = {};
+
+  function savePos(n){
+    fetch(API+"/api/nodes/"+n.id, { method:"PUT", headers:{"Content-Type":"application/json"},
+                                    body: JSON.stringify({ lat:n.lat, lng:n.lng }) })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); })
+      .catch(function(){ alert("Position changed in this page only: "+API+" doesn't accept saves (use the Python server)."); });
+  }
+  function pinIcon(hex, ring){
+    return L.divIcon({ className:"", iconSize:[24,24], iconAnchor:[12,12],
+      html:'<div style="width:24px;height:24px;border-radius:50%;box-sizing:border-box;background:'+hex+
+           ';border:5px solid '+ring+';box-shadow:0 1px 4px rgba(0,0,0,.45)"></div>' });
+  }
+  function nodesKey(){ return NODES.map(function(n){ return n.lat+","+n.lng; }).join(";"); }
+
+  function renderMap(){
+    var box = document.getElementById("map");
+    if (!window.L) { box.textContent = "Map needs internet access (Leaflet / OpenStreetMap failed to load)."; return; }
+    if (!leafMap) {
+      leafMap = L.map(box, { scrollWheelZoom: false });
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(leafMap);
+      (window.RIVERS || []).forEach(function(w){
+        L.polyline(w.p, { color:"#0b5cd5", weight:5, opacity:0.85 }).bindTooltip(w.n || w.w).addTo(leafMap);
+      });
+    }
+    NODES.forEach(function(n){
+      var r = state[n.id][state[n.id].length-1];
+      var ring = resolve("var(--"+(r ? statusFor(r.level) : "good")+")");
+      var pin = pins[n.id];
+      if (!pin) {
+        pin = pins[n.id] = L.marker([n.lat, n.lng], { draggable:true, icon:pinIcon(n.hex, ring) }).addTo(leafMap);
+        pin.bindTooltip(function(){ return n.loc+" (node "+n.id+")<br>"+n.lat.toFixed(5)+"\u00b0N "+n.lng.toFixed(5)+"\u00b0E"; });
+        pin.on("dragend", function(){
+          var ll = pin.getLatLng();
+          n.lat = ll.lat; n.lng = ll.lng;
+          leafMap._fitted = nodesKey(); // don't re-zoom under the user's hand
+          savePos(n);
+          render();
+        });
+        pin._ring = ring;
+      } else {
+        if (pin._ring !== ring) { pin.setIcon(pinIcon(n.hex, ring)); pin._ring = ring; }
+        if (!pin.dragging._draggable._moving) pin.setLatLng([n.lat, n.lng]);
+      }
+    });
+    if (leafMap._fitted !== nodesKey()) { // refit only when positions change from outside
+      leafMap.fitBounds(NODES.map(function(n){ return [n.lat, n.lng]; }), { padding:[40,40], maxZoom:17 });
+      leafMap._fitted = nodesKey();
+    }
+  }
+
+  var W=960,H=320,PAD_L=44,PAD_R=12,PAD_T=14,PAD_B=26;
+  var plotW = W-PAD_L-PAD_R, plotH = H-PAD_T-PAD_B;
+
+  function x(i, n){ return PAD_L + (n<=1 ? plotW : plotW * i/(n-1)); }
+  function y(level){ var v = Math.max(0, Math.min(MOUNT_MM, level)); return PAD_T + plotH * (1 - v/MOUNT_MM); }
+
+  function el(tag, attrs){
+    var e = document.createElementNS(NS, tag);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+
+  function renderChart(){
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var gridColor = resolve("var(--grid)"), mutedColor = resolve("var(--ink-muted)"), baseColor = resolve("var(--baseline)");
+
+    // horizontal gridlines every 200mm
+    for (var lv=0; lv<=MOUNT_MM; lv+=200){
+      var gy = y(lv);
+      svg.appendChild(el("line",{x1:PAD_L,x2:W-PAD_R,y1:gy,y2:gy,stroke:gridColor,"stroke-width":1}));
+      var lbl = el("text",{x:PAD_L-8,y:gy+3,fill:mutedColor,"font-size":10,"text-anchor":"end"});
+      lbl.textContent = (lv/1000).toFixed(1);
+      svg.appendChild(lbl);
+    }
+    svg.appendChild(el("line",{x1:PAD_L,x2:W-PAD_R,y1:PAD_T+plotH,y2:PAD_T+plotH,stroke:baseColor,"stroke-width":1}));
+
+    // threshold lines
+    [[WARN_MM,resolve("var(--warning)"),"warn"],[DANGER_MM,resolve("var(--critical)"),"danger"]].forEach(function(t){
+      var ty = y(t[0]);
+      var line = el("line",{x1:PAD_L,x2:W-PAD_R,y1:ty,y2:ty,stroke:t[1],"stroke-width":1.5,"stroke-dasharray":"4,4",opacity:0.75});
+      svg.appendChild(line);
+      var lab = el("text",{x:W-PAD_R,y:ty-4,fill:t[1],"font-size":10,"text-anchor":"end","font-weight":600});
+      lab.textContent = (t[0]===WARN_MM?"warning ":"danger ")+(t[0]/1000).toFixed(1)+"m";
+      svg.appendChild(lab);
+    });
+
+    NODES.forEach(function(n){
+      var arr = state[n.id];
+      var pts = arr.map(function(r,i){ return r.level===ERR ? null : [x(i,arr.length), y(r.level)]; });
+      var d = "";
+      pts.forEach(function(p,i){
+        if (!p){ d += ""; return; }
+        var prev = pts[i-1];
+        d += (d==="" || !prev ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1) + " ";
+      });
+      svg.appendChild(el("path",{d:d.trim(),fill:"none",stroke:n.hex,"stroke-width":2,"stroke-linecap":"round","stroke-linejoin":"round"}));
+      var last = pts[pts.length-1];
+      if (last){
+        svg.appendChild(el("circle",{cx:last[0],cy:last[1],r:3.5,fill:n.hex}));
+        var t = el("text",{x:last[0]-6,y:last[1]-8,fill:n.hex,"font-size":10,"text-anchor":"end","font-weight":600});
+        t.textContent = n.name;
+        svg.appendChild(t);
+      }
+    });
+
+    // hover crosshair layer
+    var hoverLine = el("line",{x1:0,x2:0,y1:PAD_T,y2:PAD_T+plotH,stroke:mutedColor,"stroke-width":1,visibility:"hidden"});
+    svg.appendChild(hoverLine);
+    var hitRect = el("rect",{x:PAD_L,y:PAD_T,width:plotW,height:plotH,fill:"transparent"});
+    svg.appendChild(hitRect);
+
+    var refLen = Math.max.apply(null, NODES.map(function(n){ return state[n.id].length; }));
+    if (!refLen) return;
+    hitRect.addEventListener("mousemove", function(evt){
+      var rect = svg.getBoundingClientRect();
+      var px = (evt.clientX - rect.left) * (W/rect.width);
+      var i = Math.round((px - PAD_L) / plotW * (refLen-1));
+      i = Math.max(0, Math.min(refLen-1, i));
+      var gx = x(i, refLen);
+      hoverLine.setAttribute("x1", gx); hoverLine.setAttribute("x2", gx);
+      hoverLine.setAttribute("visibility","visible");
+
+      var rows = NODES.map(function(n){
+        var r = state[n.id][i];
+        return '<div class="t-row"><span><span class="dot" style="background:'+n.hex+'"></span>'+n.name+'</span><b>'+
+          (!r?'&mdash;':r.level===ERR?'sensor error':(r.level/1000).toFixed(2)+' m')+'</b></div>';
+      }).join("");
+      var withI = NODES.filter(function(n){ return state[n.id][i]; })[0];
+      tooltip.innerHTML = '<div class="t-time">'+(withI ? fmtClock(state[withI.id][i].log_ts) : '')+'</div>'+rows;
+      tooltip.style.visibility = "visible";
+      var tx = (gx/W)*rect.width;
+      var ty = ((PAD_T)/H)*rect.height;
+      var tw = tooltip.offsetWidth;
+      tooltip.style.left = Math.min(rect.width-tw-4, Math.max(0,tx+10)) + "px";
+      tooltip.style.top = ty + "px";
+    });
+    hitRect.addEventListener("mouseleave", function(){
+      hoverLine.setAttribute("visibility","hidden");
+      tooltip.style.visibility = "hidden";
+    });
+  }
+
+  var trendData = null;
+  function fmtEta(sec){
+    if (sec == null) return "&mdash;";
+    return sec < 3600 ? Math.round(sec/60) + " min" : (sec/3600).toFixed(1) + " h";
+  }
+  function renderTrend(){
+    var wrap = document.getElementById("trendWrap");
+    wrap.style.display = trendData ? "" : "none"; // only the Python server provides /api/trend
+    if (!trendData) return;
+    document.getElementById("trendBody").innerHTML = trendData.map(function(t){
+      var n = NODES[t.node_id-1];
+      var rate = t.slope_mm_per_min == null ? "&mdash;" : (t.slope_mm_per_min > 0 ? "+" : "") + t.slope_mm_per_min + " mm/min";
+      return '<tr><td><span class="node-tag"><i style="background:'+n.hex+'"></i>'+t.node_id+'</span></td>'+
+        '<td>'+t.direction+'</td><td>'+rate+'</td><td>'+fmtEta(t.eta_warn_s)+'</td><td>'+fmtEta(t.eta_danger_s)+'</td></tr>';
+    }).join("");
+  }
+
+  function render(){
+    renderTrend();
+    renderCards();
+    renderTable();
+    renderChart();
+    renderMap();
+  }
+
+  function tickClock(){
+    document.getElementById("clock").textContent = new Date().toTimeString().slice(0,8);
+  }
+
+  // ---- settings dialog ----
+  var settingsDialog = document.getElementById("settings");
+  var settingsBody = document.getElementById("settingsBody");
+
+  function buildNodeFieldsets(){
+    var html = NODES.map(function(n){
+      return (
+        '<fieldset class="node-fields">'+
+          '<legend>Node '+n.id+'</legend>'+
+          '<div class="field-row">'+
+            '<label>Name<input type="text" id="f-name-'+n.id+'"></label>'+
+            '<label>Map label<input type="text" id="f-loc-'+n.id+'"></label>'+
+            '<label>Latitude<input type="number" step="0.00001" id="f-lat-'+n.id+'"></label>'+
+            '<label>Longitude<input type="number" step="0.00001" id="f-lng-'+n.id+'"></label>'+
+          '</div>'+
+        '</fieldset>'
+      );
+    }).join("");
+    settingsBody.insertAdjacentHTML("afterbegin", html);
+  }
+  buildNodeFieldsets();
+
+  function populateSettingsForm(){
+    NODES.forEach(function(n){
+      document.getElementById("f-name-"+n.id).value = n.name;
+      document.getElementById("f-loc-"+n.id).value = n.loc;
+      document.getElementById("f-lat-"+n.id).value = n.lat;
+      document.getElementById("f-lng-"+n.id).value = n.lng;
+    });
+    document.getElementById("f-api").value = API;
+    document.getElementById("f-mount").value = MOUNT_MM;
+    document.getElementById("f-warn").value = WARN_MM;
+    document.getElementById("f-danger").value = DANGER_MM;
+  }
+
+  document.getElementById("settingsBtn").addEventListener("click", function(){
+    populateSettingsForm();
+    settingsDialog.showModal();
+  });
+  document.getElementById("settingsCancel").addEventListener("click", function(){
+    settingsDialog.close();
+  });
+
+  document.getElementById("settingsForm").addEventListener("submit", function(evt){
+    evt.preventDefault();
+    NODES.forEach(function(n){
+      var name = document.getElementById("f-name-"+n.id).value.trim();
+      var loc = document.getElementById("f-loc-"+n.id).value.trim();
+      if (name) n.name = name;
+      if (loc) n.loc = loc;
+      var lat = parseFloat(document.getElementById("f-lat-"+n.id).value);
+      var lng = parseFloat(document.getElementById("f-lng-"+n.id).value);
+      if (isFinite(lat) && isFinite(lng) && (lat !== n.lat || lng !== n.lng)) { n.lat = lat; n.lng = lng; savePos(n); }
+    });
+    var api = document.getElementById("f-api").value.trim().replace(/\/+$/, "");
+    if (api && api !== API) {
+      API = api;
+      nodesLoaded = historyLoaded = false;
+      NODES.forEach(function(n){ state[n.id] = []; });
+      poll();
+    }
+    var mount = parseFloat(document.getElementById("f-mount").value);
+    var warn = parseFloat(document.getElementById("f-warn").value);
+    var danger = parseFloat(document.getElementById("f-danger").value);
+    if (isFinite(mount) && mount > 0) MOUNT_MM = mount;
+    if (isFinite(warn)) WARN_MM = warn;
+    if (isFinite(danger)) DANGER_MM = danger;
+
+    legendEl.innerHTML = NODES.map(function(n){
+      return '<span><i style="background:'+n.hex+'"></i>'+n.name+' &middot; node '+n.id+'</span>';
+    }).join("");
+
+    saveSettings();
+    settingsDialog.close();
+    render();
+  });
+
+  document.getElementById("settingsReset").addEventListener("click", function(){
+    DEFAULTS.nodes.forEach(function(dn){
+      var n = NODES.filter(function(x){ return x.id === dn.id; })[0];
+      if (!n) return;
+      n.name = dn.name; n.loc = dn.loc;
+    });
+    MOUNT_MM = DEFAULTS.mount; WARN_MM = DEFAULTS.warn; DANGER_MM = DEFAULTS.danger; API = DEFAULTS.api;
+    try { localStorage.removeItem(SETTINGS_KEY); } catch (e) { /* ignore */ }
+    legendEl.innerHTML = NODES.map(function(n){
+      return '<span><i style="background:'+n.hex+'"></i>'+n.name+' &middot; node '+n.id+'</span>';
+    }).join("");
+    populateSettingsForm();
+    render();
+  });
+
+  render();
+  tickClock();
+  setInterval(tickClock, 1000);
+  poll();
+  setInterval(poll, 10000);
+})();
+</script>
+</body>
+</html>

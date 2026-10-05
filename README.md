@@ -13,10 +13,10 @@ Two independent ESP-IDF projects live in this repo:
   Flash this onto each battery-powered sensor node.
 - **`/master` (project `jaga_master`)** - master node firmware. Runs the same
   sensors as a slave, *and* continuously listens on nRF24 for the slaves,
-  logs every reading (its own + received) to `/sdcard/telemetry.csv`, and can
+  logs every reading (its own + received) to `/sdcard/telem.csv`, and can
   drive an optional DS1307 RTC (for real timestamps) and SSD1306 OLED (status
-  display). Light sleeps between cycles rather than deep sleeping, since it
-  must keep listening for incoming slave packets.
+  display). Stays awake between cycles (no sleep) since it must keep listening
+  for slave packets and serving the HTTP API; Wi-Fi modem sleep handles power.
 
 Each is built/flashed independently from its own directory:
 
@@ -36,6 +36,7 @@ unit - **edit these before flashing a new node**:
 | `NODE_ID` | Unique per physical node (slaves currently 1 and 2, master is 3) |
 | `SONAR_MOUNT_HEIGHT_MM` / `SONAR_MOUNT_ANGLE_DEG` | This node's sensor mount geometry, used to convert raw distance into water level |
 | `SONAR_MAX_RANGE_MM` | Sanity ceiling for sonar readings (defaults to the sensor's own spec range) |
+| `WIFI_SSID` / `WIFI_PASS` (master only) | Wi-Fi the master joins to serve the HTTP API |
 | `OLED_ENABLED` (master only) | Set to `0` for real deployment - skips the I2C probe and all display writes to save power |
 
 A second slave node is just a copy of the root project with `NODE_ID` set to `2`.
@@ -57,3 +58,40 @@ A second slave node is just a copy of the root project with `NODE_ID` set to `2`
 Blue pulses per sonar sampling attempt, green pulses on each successful
 sample and lights solid on a fully successful cycle, red pulses for 5s on
 any read/log/TX error that cycle.
+
+## HTTP API (master)
+
+The master joins Wi-Fi and serves JSON on port 80 at `http://jaga-master.local`
+(or the IP it logs as "Got IP" on the serial console; Android often can't
+resolve `.local`). CORS is open. The API comes up whenever Wi-Fi does, without a reboot.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/status` | `{now_s, uptime_s, rtc_ok, sd_ok}` - `now_s` is the master's clock, use it to age readings |
+| `GET /api/nodes` | `[{node_id, name, lat, lng}]` - coordinates live only in `NODE_META` in `master/main/api.c` |
+| `GET /api/latest` | each node's newest reading |
+| `GET /api/history?node=1-3&limit=N` | that node's last N readings, newest first (max 90, RAM only) |
+
+Sentinels: `temperature_c`/`humidity_pct == -999` = DHT22 failed;
+`water_level_mm == -2147483648` = sonar failed. Without an RTC, timestamps are
+seconds since boot; with one they are local wall time stored as UTC epoch.
+
+Clients: `dashboard/index.html` (open from disk, set the API URL in Settings;
+must be `file://` or plain `http://`) and the Flutter app in `app/`. Alerts in
+the app only fire while it is running; background push would need FCM and an
+internet-facing server.
+
+## Dashboard server (nginx + Python + SQLite)
+
+```sh
+MASTER_URL=http://<master-ip> docker compose up --build   # then open http://localhost:8088
+```
+
+- `nginx` serves `dashboard/` and proxies `/api/` to the `api` container.
+- `server/app.py` (FastAPI) polls the master every 10s into SQLite (`data/jaga.db`), so history
+  outlasts the master's 90-reading RAM buffer and survives its reboots. It serves the same
+  `/api/status|nodes|latest|history` shape, plus `GET /api/trend?warn=&danger=`.
+- `server/trend.py` fits the last 30 min per node: rate (mm/min), rising/steady/falling, and time to the
+  warning/danger levels. Self-check: `python server/trend.py`.
+- `MASTER_URL` needs the master's IP: containers can't resolve `.local`.
+- The dashboard still works opened straight from disk against the master (the trend table just hides).

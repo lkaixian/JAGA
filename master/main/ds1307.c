@@ -1,4 +1,6 @@
 #include "ds1307.h"
+#include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -112,4 +114,25 @@ esp_err_t ds1307_set_time(ds1307_t *dev, const struct tm *time) {
     };
 
     return i2c_write(dev->i2c_port, data, sizeof(data));
+}
+
+// A fresh/battery-less DS1307 sits halted at ~year 2000. If the stored year
+// looks unset, seed it from this file's build timestamp (__DATE__/__TIME__).
+// ponytail: build time, not real time - off by the build-to-flash gap and only
+// refreshed when this file is recompiled; add a proper sync source if it matters.
+esp_err_t ds1307_set_if_unset(ds1307_t *dev) {
+    struct tm t;
+    if (ds1307_get_time(dev, &t) == ESP_OK && t.tm_year + 1900 >= 2024) return ESP_OK;
+
+    static const char months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    char mon[4];
+    int d, y, h, m, s;
+    if (sscanf(__DATE__, "%3s %d %d", mon, &d, &y) != 3 || sscanf(__TIME__, "%d:%d:%d", &h, &m, &s) != 3) {
+        return ESP_FAIL;
+    }
+    t = (struct tm){ .tm_sec = s, .tm_min = m, .tm_hour = h, .tm_mday = d,
+                     .tm_mon = (int)(strstr(months, mon) - months) / 3, .tm_year = y - 1900 };
+    mktime(&t); // fills in tm_wday
+    ESP_LOGW(TAG, "RTC unset - seeding from build time %s %s", __DATE__, __TIME__);
+    return ds1307_set_time(dev, &t);
 }

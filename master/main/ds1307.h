@@ -26,6 +26,7 @@ esp_err_t ds1307_get_time(ds1307_t *dev, struct tm *time);
 
 /** @brief Program the calendar time, e.g. once at first install. */
 esp_err_t ds1307_set_time(ds1307_t *dev, const struct tm *time);
+esp_err_t ds1307_set_if_unset(ds1307_t *dev);
 
 #ifdef __cplusplus
 }

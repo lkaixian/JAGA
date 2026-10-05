@@ -96,6 +96,7 @@ void app_main(void) {
     ds1307_t rtc;
     struct tm rtc_time;
     if (ds1307_init(&rtc, RTC_I2C_PORT, RTC_SDA_PIN, RTC_SCL_PIN) == ESP_OK &&
+        ds1307_set_if_unset(&rtc) == ESP_OK &&
         ds1307_get_time(&rtc, &rtc_time) == ESP_OK) {
         timestamp_s = (uint32_t)mktime(&rtc_time);
     }
@@ -113,7 +114,14 @@ void app_main(void) {
     // DHT22 requires a minimum of 2 seconds since power-on before it responds
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    if (dht22_read(&dht, &packet.temperature, &packet.humidity) != ESP_OK) {
+    // The bit-banged read is timing-sensitive and fails now and then, so retry
+    // before giving up.
+    esp_err_t dht_err = ESP_FAIL;
+    for (int attempt = 0; attempt < 3 && dht_err != ESP_OK; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(2000)); // DHT22 needs >= 2s between reads
+        dht_err = dht22_read(&dht, &packet.temperature, &packet.humidity);
+    }
+    if (dht_err != ESP_OK) {
         ESP_LOGW(TAG, "DHT22 read failed.");
         packet.temperature = -999.0f;
         packet.humidity = -999.0f;

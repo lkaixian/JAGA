@@ -9,7 +9,6 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
-#include "esp_sleep.h"
 
 #include "dht22.h"
 #include "jsnsr40t.h"
@@ -17,6 +16,7 @@
 #include "ds1307.h"
 #include "sdcard.h"
 #include "ssd1306.h"
+#include "api.h"
 #include "node_config.h"
 
 static const char *TAG = "MASTER_NODE";
@@ -35,7 +35,8 @@ typedef struct __attribute__((packed)) {
 } telemetry_packet_t;
 
 #define SONAR_SAMPLE_COUNT 10
-#define TELEMETRY_CSV_PATH "/sdcard/telemetry.csv"
+// 8.3 name: FATFS_LFN_NONE (the ESP-IDF default) rejects longer filenames.
+#define TELEMETRY_CSV_PATH "/sdcard/telem.csv"
 #define TELEMETRY_CSV_HEADER \
     "log_timestamp_s,node_id,sender_timestamp_s,temperature_c,humidity_pct,distance_mm,distance_stddev_mm,water_level_mm"
 
@@ -84,7 +85,7 @@ static bool sd_available = false;
 static telemetry_packet_t last_reading[4];
 static bool has_reading[4] = {false, false, false, false};
 
-static uint32_t current_timestamp_s(void) {
+uint32_t current_timestamp_s(void) { // also used by api.c
     if (rtc_available) {
         struct tm t;
         if (ds1307_get_time(&rtc, &t) == ESP_OK) {
@@ -111,6 +112,17 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
         last_reading[p->node_id] = *p;
         has_reading[p->node_id] = true;
     }
+
+    api_record_reading(&(api_reading_t){
+        .log_timestamp_s = log_timestamp_s,
+        .node_id = p->node_id,
+        .sender_timestamp_s = p->timestamp_s,
+        .temperature_c = p->temperature,
+        .humidity_pct = p->humidity,
+        .distance_mm = p->distance_mm,
+        .distance_stddev_mm = p->distance_stddev_mm,
+        .water_level_mm = p->water_level_mm,
+    });
 }
 
 // All values below are bounded in practice (node id 1-3, tenths-precision
@@ -147,6 +159,27 @@ static void update_oled(int received_this_cycle) {
     ssd1306_write_line(&oled, 7, line);
 }
 #pragma GCC diagnostic pop
+
+// Pull every payload out of the nRF24's hardware FIFO, log it, return the count.
+static int drain_radio(nrf24_t *radio) {
+    int received = 0;
+    while (nrf24_available(radio)) {
+        telemetry_packet_t rx_packet;
+        nrf24_receive_packet(radio, &rx_packet, sizeof(rx_packet));
+        uint32_t received_at = current_timestamp_s();
+
+        ESP_LOGI(TAG, "Node %u (received) -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | sent t=%us",
+                 rx_packet.node_id, rx_packet.temperature, rx_packet.humidity, rx_packet.distance_mm,
+                 rx_packet.distance_stddev_mm, (long)rx_packet.water_level_mm, rx_packet.timestamp_s);
+
+        log_telemetry(received_at, &rx_packet);
+        received++;
+    }
+    if (received > 0) {
+        ESP_LOGI(TAG, "Logged %d packet(s) from slave nodes.", received);
+    }
+    return received;
+}
 
 static const char *reset_reason_str(esp_reset_reason_t reason) {
     switch (reason) {
@@ -185,18 +218,34 @@ void app_main(void) {
     // aborting, and current_timestamp_s() just keeps the relative fallback.
     // The I2C bus stays up either way, so the OLED below still works.
     rtc_available = (ds1307_init(&rtc, RTC_I2C_PORT, RTC_SDA_PIN, RTC_SCL_PIN) == ESP_OK);
+    if (rtc_available) ds1307_set_if_unset(&rtc);
 #if OLED_ENABLED
     oled_available = (ssd1306_init(&oled, RTC_I2C_PORT) == ESP_OK);
 #endif
 
+    // Park the SD card's CS high before touching the shared SPI bus. Until
+    // sdcard_init() runs the pin floats, and a selected card drives MISO and
+    // corrupts the nRF24's reads (CONFIG reads back 0xFF).
+    gpio_reset_pin(SD_CS_PIN);
+    gpio_set_direction(SD_CS_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(SD_CS_PIN, 1);
+
     ESP_ERROR_CHECK(nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE));
-    ESP_ERROR_CHECK(nrf24_open_rx_pipe(&radio, 1, MASTER_ADDR, sizeof(telemetry_packet_t)));
+    nrf24_set_channel(&radio, 76); // must match the slave (main/main.c)
+    ESP_ERROR_CHECK(nrf24_open_rx_pipe(&radio, 0, MASTER_ADDR, sizeof(telemetry_packet_t)));
     nrf24_start_listening(&radio); // CE stays high from here - keeps receiving even while we're busy below
 
     // A missing/bad SD card shouldn't crash-loop the whole node - log a
     // warning and keep running with SD logging disabled (status still shows
     // on the OLED and in the serial log either way).
     sd_available = (sdcard_init(SPI2_HOST, SD_CS_PIN) == ESP_OK);
+
+    // A missing/misconfigured Wi-Fi network shouldn't block booting either -
+    // same "degrade, don't crash-loop" treatment as the SD card and RTC above.
+    api_set_health(rtc_available, sd_available);
+    if (api_start() != ESP_OK) {
+        ESP_LOGW(TAG, "API failed to start - continuing with SD-only logging.");
+    }
 
     ESP_LOGI(TAG, "Master node ready (node_id=%u), listening + logging forever.", NODE_ID);
 
@@ -212,7 +261,14 @@ void app_main(void) {
         // DHT22 requires a minimum of 2 seconds between reads
         vTaskDelay(pdMS_TO_TICKS(2000));
 
-        if (dht22_read(&dht, &packet.temperature, &packet.humidity) != ESP_OK) {
+        // The bit-banged read is timing-sensitive and fails now and then
+        // (e.g. "pulse width measurement timeout"), so retry before giving up.
+        esp_err_t dht_err = ESP_FAIL;
+        for (int attempt = 0; attempt < 3 && dht_err != ESP_OK; attempt++) {
+            if (attempt) vTaskDelay(pdMS_TO_TICKS(2000)); // DHT22 needs >= 2s between reads
+            dht_err = dht22_read(&dht, &packet.temperature, &packet.humidity);
+        }
+        if (dht_err != ESP_OK) {
             ESP_LOGW(TAG, "DHT22 read failed.");
             packet.temperature = -999.0f;
             packet.humidity = -999.0f;
@@ -278,53 +334,25 @@ void app_main(void) {
         // Drain anything the slave nodes sent while we were busy above - the
         // nRF24 buffers up to 3 payloads in hardware on its own as long as
         // CE stays high, no CPU involvement needed until we poll it here.
-        int received = 0;
-        while (nrf24_available(&radio)) {
-            telemetry_packet_t rx_packet;
-            nrf24_receive_packet(&radio, &rx_packet, sizeof(rx_packet));
-            uint32_t received_at = current_timestamp_s();
-
-            ESP_LOGI(TAG, "Node %u (received) -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | sent t=%us",
-                     rx_packet.node_id, rx_packet.temperature, rx_packet.humidity, rx_packet.distance_mm,
-                     rx_packet.distance_stddev_mm, (long)rx_packet.water_level_mm, rx_packet.timestamp_s);
-
-            log_telemetry(received_at, &rx_packet);
-            received++;
-        }
-        if (received > 0) {
-            ESP_LOGI(TAG, "Logged %d packet(s) from slave nodes this cycle.", received);
-        }
+        int received = drain_radio(&radio);
 
         update_oled(received);
 
-        // Hold the result on screen for 5s, then switch to a power-saving
-        // notice for another 5s and blank the screen before actually
-        // sleeping. Explicitly turn the status LEDs off here too - light
-        // sleep retains GPIO output levels rather than resetting them like
-        // deep sleep does, so whichever LED gpio_set_level() left on above
-        // would otherwise stay lit (and drawing current) for the whole
-        // ~55s sleep window.
+        // Hold the status LEDs for 5s, then turn them off.
+        // The OLED stays on the whole time for now (no blanking).
         vTaskDelay(pdMS_TO_TICKS(5000));
         gpio_set_level(LED_RED, 0);
         gpio_set_level(LED_GREEN, 0);
-        if (oled_available) {
-            ssd1306_clear(&oled);
-            ssd1306_write_line(&oled, 3, "ENTERING SLEEP");
-        }
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        if (oled_available) {
-            ssd1306_clear(&oled);
-        }
 
-        int64_t elapsed_us = esp_timer_get_time() - cycle_start;
-        int64_t remaining_us = CYCLE_PERIOD_US - elapsed_us;
-        if (remaining_us > 0) {
-            // Light sleep, not deep sleep: RAM and GPIO output levels (CE
-            // included) are retained, so the nRF24 keeps listening and
-            // buffering into its hardware FIFO the whole time - unlike deep
-            // sleep, no wiring change or wake-on-packet logic is needed.
-            esp_sleep_enable_timer_wakeup((uint64_t)remaining_us);
-            esp_light_sleep_start();
+        // Stay awake (no light sleep) so the HTTP API keeps answering; Wi-Fi's
+        // default min-modem-sleep handles power. Drain the nRF24 FIFO every 1s
+        // so a slave packet shows up within ~1s of arriving (no IRQ pin
+        // wired, so this polls).
+        while (esp_timer_get_time() - cycle_start < CYCLE_PERIOD_US) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+
+            received += drain_radio(&radio);
+            update_oled(received); // also keeps the UPTIME line ticking
         }
     }
 }
