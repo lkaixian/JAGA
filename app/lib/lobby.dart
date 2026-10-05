@@ -51,11 +51,15 @@ String normalizeUrl(String input) {
   return '${plain ? 'http' : 'https'}://$u';
 }
 
-Future<List<Site>> fetchDirectory() async {
+/// Raw JSON text, so the last good copy can be cached as is.
+Future<String> fetchDirectory() async {
   final res = await http.get(Uri.parse(directoryUrl)).timeout(const Duration(seconds: 6));
   if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-  return [for (final j in jsonDecode(res.body) as List) Site.fromJson(j as Map<String, dynamic>)];
+  return res.body;
 }
+
+List<Site> parseDirectory(String json) =>
+    [for (final j in jsonDecode(json) as List) Site.fromJson(j as Map<String, dynamic>)];
 
 Future<Position?> currentPosition() async {
   try {
@@ -103,10 +107,18 @@ class _LobbyScreenState extends State<LobbyScreen> {
     });
     pos = await currentPosition();
     try {
-      sites = await fetchDirectory();
+      final body = await fetchDirectory();
+      sites = parseDirectory(body);
+      await widget.s.saveDirectory(body);
     } catch (_) {
-      sites = [...widget.s.recent];
-      error = 'Could not load the server list. Showing recent servers.';
+      try {
+        sites = parseDirectory(widget.s.cachedDirectory ?? '');
+        if (sites.isEmpty) throw const FormatException('empty');
+        error = 'Could not load the server list. Showing the last saved list.';
+      } catch (_) {
+        sites = [...widget.s.recent];
+        error = 'Could not load the server list. Showing recent servers.';
+      }
     }
     sites.sort((a, b) => (_km(a) ?? double.infinity).compareTo(_km(b) ?? double.infinity));
     if (!mounted) return;

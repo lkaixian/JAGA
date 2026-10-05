@@ -37,6 +37,12 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   bool _paused = false;
   bool _historyLoaded = false;
   final Map<int, NodeStatus> _lastStatus = {};
+  final Map<int, NodeHealth> _lastHealth = {};
+  bool notificationsOff = false;
+
+  bool get serverTooNew => (serverStatus?.apiVersion ?? 1) > supportedApiVersion;
+  String? get cachedDirectory => _prefs.getString('directory');
+  Future<void> saveDirectory(String json) => _prefs.setString('directory', json);
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
@@ -56,9 +62,25 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await _notifier
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
+    await checkNotifications();
 
     WidgetsBinding.instance.addObserver(this);
     if (host != null) _start();
+  }
+
+  /// Updates [notificationsOff] from the OS permission; Settings and resume call this.
+  Future<void> checkNotifications() async {
+    bool? on;
+    try {
+      on = await _notifier.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.areNotificationsEnabled() ??
+          (await _notifier.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.checkPermissions())?.isEnabled;
+    } catch (e) {
+      debugPrint('notification check failed: $e');
+    }
+    if (on != null && notificationsOff == on) {
+      notificationsOff = !on;
+      notifyListeners();
+    }
   }
 
   void _start() {
@@ -76,6 +98,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) checkNotifications();
     if (state == AppLifecycleState.paused) {
       _paused = true;
       _timer?.cancel();
@@ -98,15 +121,20 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     link = LinkState.connected;
     _historyLoaded = false;
     _lastStatus.clear();
+    _lastHealth.clear();
   }
 
   /// Joins [site] after checking it answers. Returns an error message, or null on success.
   Future<String?> join(Site site) async {
+    final Status st;
     try {
-      await ApiClient(site.url).status();
-    } catch (_) {
-      return "Can't reach ${site.name}";
+      st = await ApiClient(site.url).status();
+    } catch (e) {
+      debugPrint('join failed: $e');
+      return joinFailure(e);
     }
+    final bad = joinFailure(null, st);
+    if (bad != null) return bad;
     host = site.url;
     siteName = site.name;
     recent = [site, ...recent.where((r) => r.url != site.url)].take(5).toList();
@@ -175,7 +203,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk);
       lastOk = DateTime.now();
       _checkAlerts();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('poll failed (${e is TypeError || e is FormatException ? 'bad reply' : 'network'}): $e');
       _fails++;
       link = LinkState.serverDown; // keep the last data on screen
     }
@@ -183,23 +212,31 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _schedule();
   }
 
+  void _show(int id, String title, String body) => _notifier.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: const NotificationDetails(
+          android: AndroidNotificationDetails('alerts', 'Flood alerts', importance: Importance.high, priority: Priority.high),
+          iOS: DarwinNotificationDetails()));
+
   void _checkAlerts() {
+    final nowS = DateTime.now().millisecondsSinceEpoch / 1000;
     for (final id in history.keys) {
       final r = latestOf(id);
       if (r == null) continue;
+      final name = nodeById(id)?.name ?? 'Node $id';
       final s = r.status(warnMm, dangerMm);
       if (crossedIntoAlert(_lastStatus[id], s)) {
-        final name = nodeById(id)?.name ?? 'Node $id';
-        _notifier.show(
-            id: id,
-            title: 'Flood alert: $name',
-            body: 'Water level ${(r.levelMm / 1000).toStringAsFixed(2)} m',
-            notificationDetails: const NotificationDetails(
-                android: AndroidNotificationDetails('alerts', 'Flood alerts',
-                    importance: Importance.high, priority: Priority.high),
-                iOS: DarwinNotificationDetails()));
+        _show(id, 'Flood alert: $name', 'Water level ${(r.levelMm / 1000).toStringAsFixed(2)} m');
       }
       _lastStatus[id] = s;
+      final h = nodeHealth(r, nowS);
+      if (lostSignalFires(_lastHealth[id], h, r.levelMm, warnMm)) {
+        _show(100 + id, 'Lost signal: $name',
+            'No report for ${((nowS - r.receivedAt!) / 60).floor()} min. Last level ${(r.levelMm / 1000).toStringAsFixed(2)} m.');
+      }
+      _lastHealth[id] = h;
     }
   }
 }

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jaga_app/api.dart';
 import 'package:jaga_app/lobby.dart';
@@ -29,6 +32,40 @@ void main() {
   });
   healthTests();
   lobbyTests();
+  errorTests();
+}
+
+void errorTests() {
+  test('join classifier and api_version gate', () {
+    const noNet = 'No internet connection. Check your network and try again.';
+    const noAnswer = "That server isn't answering.";
+    const notJaga = "That address answered, but it isn't a JAGA server.";
+    expect(joinFailure(const SocketException('Failed host lookup')), noNet);
+    expect(joinFailure(const SocketException('Connection refused', osError: OSError('Connection refused', 111))), noAnswer);
+    expect(joinFailure(TimeoutException('x')), noAnswer);
+    expect(joinFailure(Exception('HTTP 502')), noAnswer);
+    expect(joinFailure(const FormatException('<html>')), notJaga);
+    final noNow = <String, dynamic>{'uptime_s': 1, 'rtc_ok': true, 'sd_ok': true};
+    expect(() => Status.fromJson(noNow), throwsA(isA<TypeError>()));
+    expect(joinFailure(TypeError()), notJaga);
+
+    Status v(Map<String, dynamic> extra) =>
+        Status.fromJson({'now_s': 1, 'uptime_s': 1, 'rtc_ok': true, 'sd_ok': true, ...extra});
+    expect(v({}).apiVersion, 1); // master firmware: absent means 1
+    expect(joinFailure(null, v({'api_version': 1})), isNull);
+    expect(joinFailure(null, v({'api_version': 2})), tooNewMsg);
+  });
+
+  test('lost signal fires once per outage, only from Watch up', () {
+    const live = NodeHealth.live, lost = NodeHealth.noSignal;
+    expect(lostSignalFires(live, lost, 620, 600), isTrue);
+    expect(lostSignalFires(lost, lost, 620, 600), isFalse); // same outage
+    expect(lostSignalFires(live, lost, 500, 600), isFalse); // below Watch
+    expect(lostSignalFires(live, lost, -2147483648, 600), isFalse); // sonar fault
+    expect(lostSignalFires(null, lost, 620, 600), isFalse); // outage already on at launch
+    expect(lostSignalFires(lost, live, 620, 600), isFalse);
+    expect(lostSignalFires(live, lost, 620, 600), isTrue); // reported again, then lost again
+  });
 }
 
 void healthTests() {

@@ -110,7 +110,7 @@ class _StatusTab extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          if (s.link != LinkState.connected) _LinkBanner(s),
+          if (s.link != LinkState.connected || s.serverTooNew) _LinkBanner(s),
           for (final id in s.history.keys) _NodeCard(s, id),
         ],
       );
@@ -124,7 +124,9 @@ class _LinkBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final down = s.link == LinkState.serverDown;
     final at = down ? s.lastOk : s.masterLastAt;
-    final text = down
+    final text = s.serverTooNew
+        ? tooNewMsg
+        : down
         ? "Can't reach the server.${at == null ? '' : ' Showing data from ${_hm(at)}.'}"
         : "The server can't reach the master node.${at == null ? '' : ' Readings stopped at ${_hm(at)}.'}";
     final c = Theme.of(context).colorScheme;
@@ -273,6 +275,12 @@ class _SettingsTab extends StatefulWidget {
 }
 
 class _SettingsTabState extends State<_SettingsTab> {
+  @override
+  void initState() {
+    super.initState();
+    widget.s.checkNotifications();
+  }
+
   late final warn = TextEditingController(text: widget.s.warnMm.toStringAsFixed(0));
   late final danger = TextEditingController(text: widget.s.dangerMm.toStringAsFixed(0));
   late final mount = TextEditingController(text: widget.s.mountMm.toStringAsFixed(0));
@@ -288,6 +296,14 @@ class _SettingsTabState extends State<_SettingsTab> {
 
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+        if (widget.s.notificationsOff)
+          Card(
+            color: Theme.of(context).colorScheme.errorContainer,
+            child: const ListTile(
+              leading: Icon(Icons.notifications_off),
+              title: Text('Alerts are off. Allow notifications to get flood alerts.'),
+            ),
+          ),
         Card(
           child: ListTile(
             leading: const Icon(Icons.dns),

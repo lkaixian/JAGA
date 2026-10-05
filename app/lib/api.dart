@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -13,6 +15,23 @@ enum LinkState { connected, masterDown, serverDown }
 enum NodeHealth { live, fault, noSignal, noData }
 
 const staleS = 180;
+const supportedApiVersion = 1;
+const tooNewMsg = 'This server needs a newer version of the app.';
+
+/// Join failure text for an exception, or (no exception) for a reply that parsed. Null = joinable.
+String? joinFailure(Object? e, [Status? st]) {
+  if (e == null) return st != null && st.apiVersion > supportedApiVersion ? tooNewMsg : null;
+  if (e is FormatException || e is TypeError) return "That address answered, but it isn't a JAGA server.";
+  // ponytail: refusal is matched by message text; the OS error codes differ per platform
+  if ((e is SocketException || e is http.ClientException) && !e.toString().toLowerCase().contains('refused')) {
+    return 'No internet connection. Check your network and try again.';
+  }
+  return "That server isn't answering."; // timeout, HTTP error, connection refused
+}
+
+/// One notification per outage: only on the poll where a node at Watch or above goes silent.
+bool lostSignalFires(NodeHealth? prev, NodeHealth now, int levelMm, double warnMm) =>
+    now == NodeHealth.noSignal && prev != null && prev != NodeHealth.noSignal && levelMm >= warnMm;
 
 /// Server unreachable beats master unreachable beats connected.
 LinkState linkState({required bool serverReachable, required bool masterOk}) =>
@@ -66,9 +85,10 @@ class Status {
   final int nowS, uptimeS;
   final bool rtcOk, sdOk, masterOk; // masterOk is absent when talking to the master directly
   final int? masterAgeS;
-  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk, [this.masterOk = true, this.masterAgeS]);
+  final int apiVersion; // absent on the master firmware: version 1
+  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk, [this.masterOk = true, this.masterAgeS, this.apiVersion = 1]);
   factory Status.fromJson(Map<String, dynamic> j) => Status(j['now_s'], j['uptime_s'], j['rtc_ok'],
-      j['sd_ok'], j['master_ok'] ?? true, (j['master_age_s'] as num?)?.toInt());
+      j['sd_ok'], j['master_ok'] ?? true, (j['master_age_s'] as num?)?.toInt(), (j['api_version'] as num?)?.toInt() ?? 1);
 }
 
 class ApiClient {
