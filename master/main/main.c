@@ -273,7 +273,7 @@ void app_main(void) {
     }
 
     // A hung main loop now reboots the master after 30 s (panic = true).
-    esp_task_wdt_init(30, true);
+    if (esp_task_wdt_init(30, true) != ESP_OK) ESP_LOGW(TAG, "Task watchdog setup failed. A hung loop will not reboot the node.");
     esp_task_wdt_add(NULL);
 
     ESP_LOGI(TAG, "Master node ready (node_id=%u), listening + logging forever.", NODE_ID);
@@ -377,6 +377,7 @@ void app_main(void) {
                 sd_available = true;
                 ESP_LOGI(TAG, "SD card is back. Logging resumed.");
             }
+            esp_task_wdt_reset(); // card init retries can take several seconds
         }
         cycle++;
 
