@@ -3,18 +3,18 @@ import json, os, sys, tempfile, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-mode = {"status": 200, "nodes": 200, "latest": 200, "n": 0, "raw": None}
+mode = {"status": 200, "nodes": 200, "latest": 200, "history": 200, "n": 0, "raw": None, "hist": []}
 ST = {"now_s": 1000, "uptime_s": 500, "rtc_ok": True, "sd_ok": True}
 
 
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
-        k = self.path.split("/")[-1]
+        k = self.path.split("/")[-1].split("?")[0]
         code = mode[k]
         body = {"status": ST, "nodes": [{"node_id": 1}],
                 "latest": [{"log_timestamp_s": mode["n"], "node_id": 1, "sender_timestamp_s": mode["n"],
                             "temperature_c": 25.0, "humidity_pct": 50.0, "distance_mm": 100,
-                            "distance_stddev_mm": 1, "water_level_mm": 400}]}[k] if code == 200 else {}
+                            "distance_stddev_mm": 1, "water_level_mm": 400}], "history": mode["hist"]}[k] if code == 200 else {}
         if k == "latest" and mode["raw"] is not None:
             body = mode["raw"]
         self.send_response(code)
@@ -104,6 +104,94 @@ poll()
 with A.closing(A.db()) as d:
     assert d.execute("SELECT COUNT(*) FROM readings WHERE node_id=9").fetchone()[0] == 1
 assert c.get("/api/status").json()["api_version"] == 1
+
+
+def row(node, log, snd, lvl):
+    return {"log_timestamp_s": log, "node_id": node, "sender_timestamp_s": snd, "temperature_c": 25.0,
+            "humidity_pct": 50.0, "distance_mm": 100, "distance_stddev_mm": 1, "water_level_mm": lvl}
+
+
+def logs(node):
+    with A.closing(A.db()) as d:
+        return [r[0] for r in d.execute("SELECT log_timestamp_s FROM readings WHERE node_id=? ORDER BY id", (node,))]
+
+
+# item 1: oversize int and NaN rows are rejected, a crash inside poll_once does not end the loop
+rej = A.rejected
+poll(raw=[row(4, 1, 1, 2**70), {**row(4, 2, 2, 300), "temperature_c": float("nan")}, row(4, 3, 3, 300)])
+assert A.rejected == rej + 2 and logs(4) == [3]
+real_once, f = A.poll_once, A.health["fails"]
+A.poll_once = lambda: 1 / 0
+A.poll_step()
+A.poll_step()
+A.poll_once = real_once
+assert A.health["fails"] == f + 2 and A.last_err is not None
+poll(raw=[row(4, 4, 4, 300)])
+A.poll_step()
+assert logs(4) == [3, 4] and A.last_err is None
+
+# item 2: unopenable DB at startup still serves, then recovers once the path works
+good_db, bad_dir = A.DB, tempfile.mkdtemp()
+A.DB = os.path.join(bad_dir, "sub", "x.db")
+real_loop, started = A.poll_loop, []
+A.poll_loop = lambda: started.append(1)
+with TestClient(A.app) as c2:
+    r = c2.get("/api/health")
+    assert r.status_code == 503 and r.json()["error"]["code"] == "db_unavailable" and A.health["db_ok"] is False
+    assert c2.get("/api/latest").json()["error"]["code"] == "db_unavailable"
+A.poll_loop = real_loop
+os.makedirs(os.path.join(bad_dir, "sub"))
+poll(raw=[row(20, 1, 1, 300)])
+assert A.health["db_ok"] is True and logs(20) == [1] and c.get("/api/health").status_code == 200
+A.DB = good_db
+
+# item 3: dedupe against every recent row, not only the last
+poll(raw=[row(5, 10, 10, 300)]); poll(raw=[row(5, 20, 20, 310)]); poll(raw=[row(5, 10, 10, 300)])
+assert logs(5) == [10, 20]  # older reading re-served
+for _ in range(2):
+    poll(raw=[row(6, 10, 10, 300)]); poll(raw=[row(6, 20, 20, 310)])
+assert logs(6) == [10, 20]  # alternating sources
+poll(raw=[row(7, 1, 1, 300)]); poll(raw=[row(7, 1, 1, 350)])
+assert logs(7) == [1, 1]  # same timestamps, new level
+with A.closing(A.db()) as d, d:
+    d.execute("UPDATE readings SET received_at = received_at - 700 WHERE node_id=7")
+poll(raw=[row(7, 1, 1, 300)])
+assert logs(7) == [1, 1, 1]  # outside the 10-minute window it counts as new
+
+# item 4: backfill burst, latest shows only the newest
+mode["hist"] = [row(8, i, i, 300 + i) for i in (5, 4, 3, 2, 1)]
+poll(raw=[row(8, 5, 5, 305)])
+assert logs(8) == [1, 2, 3, 4, 5]
+poll(raw=[row(8, 5, 5, 305)])
+assert logs(8) == [1, 2, 3, 4, 5]
+# an older backfilled row is stamped by how far behind the newest it is, not with "now"
+mode["hist"] = [row(12, 1000, 1000, 300), row(12, 880, 880, 290), row(12, 5000, 5000, 280)]
+poll(raw=[row(12, 1000, 1000, 300)])
+assert logs(12) == [880, 1000]
+with A.closing(A.db()) as d:
+    ages = {l: A.time.time() - t for l, t in d.execute("SELECT log_timestamp_s, received_at FROM readings WHERE node_id=12")}
+assert 119 <= ages[880] <= 125 and ages[1000] < 5, ages
+mode.update(history=500, hist=[])
+poll(raw=[row(10, 1, 1, 300)])
+assert logs(10) == [1] and A.health["fails"] == 0  # history failed: latest only, poll not failed
+mode.update(history=200, hist={"not": "a list"})
+poll(raw=[row(11, 1, 1, 300)])
+assert logs(11) == [1]
+mode.update(hist=[], raw=None)
+
+# item 5: names in the master-never-reached fallback
+assert c.put("/api/nodes/1", json={"lat": 1.5, "lng": 2.5}).status_code == 200
+old_nodes, A.master["nodes"] = A.master["nodes"], None
+n1 = [n for n in c.get("/api/nodes").json() if n["node_id"] == 1][0]
+assert n1["name"] == "Node 1" and n1["lat"] == 1.5
+A.master["nodes"] = old_nodes
+
+# item 6: status is one tuple, age and now_s come from the same assignment
+poll()
+assert isinstance(A.master["status"], tuple) and "status_at" not in A.master
+A.master["status"] = (ST, A.time.time() - 100)
+s = c.get("/api/status").json()
+assert s["master_age_s"] in (100, 101) and s["now_s"] in (1100, 1101)
 
 
 def shape(r, status, code):

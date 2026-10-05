@@ -1,5 +1,6 @@
 """JAGA API: polls the ESP32 master into SQLite and serves the same /api/* shape, plus /api/trend."""
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -24,10 +25,11 @@ API_VERSION = 1  # bump on a breaking change so old apps can say so
 COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "humidity_pct",
         "distance_mm", "distance_stddev_mm", "water_level_mm")
 
-master = {"status": None, "status_at": 0.0, "nodes": None}
+master = {"status": None, "nodes": None}  # status is one (dict, fetched_at) tuple: a single assignment, no torn read
 health = {"master_ok": False, "last_ok": 0.0, "fails": 0, "db_ok": True}
 rejected = 0  # master rows dropped as malformed since start
 last_prune = 0.0
+last_err = None  # last poll_once crash text, so a repeating error prints once
 
 
 def db():
@@ -55,10 +57,41 @@ def fetch(path):
 def valid(r):
     if not isinstance(r, dict) or not all(k in r for k in COLS):
         return False
-    num = lambda v, t: isinstance(v, t) and not isinstance(v, bool)
+    # sqlite3 raises OverflowError (not sqlite3.Error) above 2**63, and NaN/inf are not readings
+    num = lambda v, t: (isinstance(v, t) and not isinstance(v, bool)
+                        and (abs(v) < 2**63 if isinstance(v, int) else math.isfinite(v)))
     return (num(r["node_id"], int) and r["node_id"] >= 1
             and all(num(r[k], int) for k in COLS if k.endswith(("_s", "_mm")))
             and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct")))
+
+
+def dup(c, r):
+    # master re-serves readings; store each once. ponytail: only a 10-minute window, not a unique key,
+    # because master timestamps restart from small numbers after a reboot without RTC.
+    return c.execute("SELECT 1 FROM readings WHERE node_id=? AND received_at>=? AND log_timestamp_s=? "
+                     "AND sender_timestamp_s=? AND water_level_mm=? LIMIT 1",
+                     (r["node_id"], time.time() - 600, r["log_timestamp_s"], r["sender_timestamp_s"],
+                      r["water_level_mm"])).fetchone() is not None
+
+
+def with_backfill(rows):
+    # /api/latest serves one row per node; a slave flushing a burst needs the master's history too
+    out = []
+    with closing(db()) as c:
+        for r in rows:
+            if valid(r) and not dup(c, r):
+                try:
+                    h = fetch(f"/api/history?node={r['node_id']}&limit=8")
+                    for x in reversed(h):  # oldest first
+                        # arrival time of an older row = now minus how far behind the newest it is, on the master's
+                        # own clock; a larger log_timestamp_s means the master rebooted, so the clocks don't compare
+                        if valid(x) and x["node_id"] == r["node_id"] and x["log_timestamp_s"] <= r["log_timestamp_s"]:
+                            x["_age"] = r["log_timestamp_s"] - x["log_timestamp_s"]
+                            out.append(x)
+                except Exception:  # latest alone is still stored
+                    pass
+            out.append(r)
+    return out
 
 
 def store(rows):
@@ -72,23 +105,19 @@ def store(rows):
             if n:
                 print(f"pruned {n} readings older than {RETAIN_DAYS} days", flush=True)
         for r in good:
-            last = c.execute("SELECT log_timestamp_s, sender_timestamp_s FROM readings "
-                             "WHERE node_id=? ORDER BY id DESC LIMIT 1", (r["node_id"],)).fetchone()
-            # master re-serves the same newest reading until a new one lands; store each once
-            if last and (last[0], last[1]) == (r["log_timestamp_s"], r["sender_timestamp_s"]):
+            if dup(c, r):
                 continue
             c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
-                      (time.time(), *[r[k] for k in COLS]))
+                      (time.time() - r.get("_age", 0), *[r[k] for k in COLS]))
 
 
 def poll_once():
     ok = 0
     for key, path in (("status", "/api/status"), ("nodes", "/api/nodes")):
         try:
-            master[key] = fetch(path)
+            v = fetch(path)
+            master[key] = (v, time.time()) if key == "status" else v
             ok += 1
-            if key == "status":
-                master["status_at"] = time.time()
         except Exception:  # one endpoint failing must not block the others
             pass
     try:
@@ -99,7 +128,8 @@ def poll_once():
     except Exception:
         rows = []
     try:
-        store(rows)
+        init_db()  # retried here when startup could not open the database
+        store(with_backfill(rows))
         if not health["db_ok"]:
             health["db_ok"] = True
             print("database writable again", flush=True)
@@ -120,15 +150,31 @@ def poll_once():
         print("master reachable again", flush=True)
 
 
+def poll_step():
+    global last_err
+    try:
+        poll_once()
+        last_err = None
+    except Exception as e:  # a bad poll must never end the thread
+        health["fails"] += 1
+        if repr(e) != last_err:
+            last_err = repr(e)
+            print("poll failed:", last_err, flush=True)
+
+
 def poll_loop():
     while True:
-        poll_once()
+        poll_step()
         time.sleep(min(30, POLL_S * max(1, health["fails"])))  # back off 10, 20, 30 s while polls fail
 
 
 @asynccontextmanager
 async def lifespan(_):
-    init_db()
+    try:
+        init_db()
+    except Exception as e:  # keep serving: /api/health reports it and the poll retries init_db
+        health["db_ok"] = False
+        print("database unavailable at startup:", repr(e), flush=True)
     threading.Thread(target=poll_loop, daemon=True).start()
     yield
 
@@ -198,10 +244,10 @@ def healthz():
 
 @app.get("/api/status")
 def status():
-    st = master["status"]
-    if not st:
+    if not master["status"]:
         return err(503, "master_unreachable", "The server hasn't reached the master node yet.")
-    elapsed = time.time() - master["status_at"]  # keep now_s ticking while the master is unreachable
+    st, at = master["status"]
+    elapsed = time.time() - at  # keep now_s ticking while the master is unreachable
     return {**st, "now_s": st["now_s"] + int(elapsed), "uptime_s": st["uptime_s"] + int(elapsed),
             "master_age_s": int(elapsed), "master_ok": health["master_ok"],
             "api_version": API_VERSION}
@@ -212,7 +258,7 @@ def nodes():
     with closing(db()) as c:  # positions set from the dashboard override the master's placeholders
         pos = {r["node_id"]: r for r in c.execute("SELECT * FROM node_pos")}
     # master offline: still serve saved positions (ids only) so the map is right before the master is up
-    base = master["nodes"] or [{"node_id": i} for i in pos]
+    base = master["nodes"] or [{"node_id": i, "name": f"Node {i}"} for i in pos]
     return [{**n, "lat": pos[n["node_id"]]["lat"], "lng": pos[n["node_id"]]["lng"]} if n["node_id"] in pos else n
             for n in base]
 
