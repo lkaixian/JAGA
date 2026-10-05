@@ -80,6 +80,9 @@ String lastSeenText(DateTime now, int? ageS) =>
 String _bare(String url) => url.replaceFirst(RegExp(r'^https?://'), '');
 String _km1(double km) => km < 10 ? km.toStringAsFixed(1) : km.toStringAsFixed(0);
 
+/// Address without the scheme but with any path, and whether it is encrypted (not plain http).
+(String, bool) displayAddress(String url) => (_bare(url), !url.startsWith('http://'));
+
 /// Ping chip; [loading] shows "…" until the answer arrives.
 class PingChip extends StatelessWidget {
   final int? ms;
@@ -129,12 +132,20 @@ Future<bool> confirmJoin(BuildContext context, Site site, {double? km, int? ping
       ? 'Location not listed'
       : '${site.lat!.abs().toStringAsFixed(4)}°${site.lat! >= 0 ? 'N' : 'S'}, '
           '${site.lng!.abs().toStringAsFixed(4)}°${site.lng! >= 0 ? 'E' : 'W'}${km == null ? '' : ' · ${_km1(km)} km away'}';
+  final addr = displayAddress(site.url);
   return await showDialog<bool>(
         context: context,
         builder: (c) => AlertDialog(
-          title: Row(children: [SiteAvatar(site), const SizedBox(width: 12), Expanded(child: Text(site.name))]),
+          title: const Text('Join this network?'),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_bare(site.url)),
+            Row(children: [
+              SiteAvatar(site),
+              const SizedBox(width: 12),
+              Expanded(child: Text(site.name, style: Theme.of(c).textTheme.titleLarge)),
+            ]),
+            const SizedBox(height: 12),
+            Text(addr.$1),
+            if (!addr.$2) const Text('This address is not encrypted.', style: TextStyle(color: Colors.red)),
             const SizedBox(height: 4),
             Text(loc),
             const SizedBox(height: 8),
@@ -375,7 +386,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
           keyboardType: TextInputType.url,
           decoration: const InputDecoration(
             labelText: 'Join by address',
-            helperText: 'e.g. jaga.larmkx.com, or a LAN IP like 192.168.1.50',
             border: OutlineInputBorder(),
           ),
         ),

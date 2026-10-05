@@ -46,6 +46,7 @@ void main() {
   errorTests();
   fixTests();
   pingTests();
+  levelTests();
 }
 
 void fixTests() {
@@ -183,5 +184,51 @@ void pingTests() {
     final s = Site.fromJson({'name': 'A', 'url': 'https://a.example/', 'lat': 1, 'lng': 2, 'logo': '/logo.png'});
     expect((s.url, s.logo, s.lat), ('https://a.example', '/logo.png', 1.0));
     expect(Site.fromJson({'name': 'B', 'url': 'https://b.example'}).logo, isNull);
+  });
+}
+
+void levelTests() {
+  test('levelAction covers every branch', () {
+    LevelAction a(bool c, bool p, String? last, String n) => levelAction(custom: c, protect: p, lastRev: last, newRev: n);
+    expect(a(true, true, 'a', 'a'), LevelAction.noChange);
+    expect(a(false, true, 'a', 'a'), LevelAction.noChange);
+    expect(a(false, true, 'a', 'b'), LevelAction.adoptSilently);
+    expect(a(false, false, null, 'b'), LevelAction.adoptSilently);
+    expect(a(true, true, 'a', 'b'), LevelAction.keepAndNote);
+    expect(a(true, false, 'a', 'b'), LevelAction.overwriteCustom);
+  });
+
+  test('activeLevels: custom, published, defaults', () {
+    final cfg = ServerConfig((600, 800, 1500), 'abcd1234');
+    final p = LevelPrefs()..mine = (1, 2, 3);
+    expect(activeLevels(p, cfg), (600, 800, 1500));
+    expect(activeLevels(p, null), defaultLevels);
+    p.custom = true;
+    expect(activeLevels(p, cfg), (1, 2, 3));
+    expect(activeLevels(LevelPrefs.fromJson(p.toJson()), null), (1, 2, 3));
+  });
+
+  test('validateLevels', () {
+    expect(validateLevels(700, 900, 1200), isNull);
+    expect(validateLevels(900, 900, 1200), 'Warning must be lower than danger.');
+    expect(validateLevels(900, 800, 1200), 'Warning must be lower than danger.');
+    expect(validateLevels(700, 1300, 1200), 'Danger must not be higher than chart top.');
+    expect(validateLevels(0, 900, 1200), isNotNull);
+    expect(validateLevels(-5, 900, 1200), isNotNull);
+    expect(validateLevels(null, 900, 1200), isNotNull);
+  });
+
+  test('ServerConfig.tryParse', () {
+    final c = ServerConfig.tryParse({'warn_mm': 600, 'danger_mm': 800, 'depth_mm': 1500, 'rev': 'abcd1234'})!;
+    expect((c.levels, c.rev), ((600, 800, 1500), 'abcd1234'));
+    expect(ServerConfig.tryParse({'warn_mm': 600, 'danger_mm': 800, 'rev': 'abcd1234'}), isNull);
+    expect(ServerConfig.tryParse({'warn_mm': 600, 'danger_mm': 800, 'depth_mm': 1500}), isNull);
+    expect(ServerConfig.tryParse([]), isNull);
+    expect(ServerConfig.tryParse(null), isNull);
+  });
+
+  test('displayAddress keeps the path and flags plain http', () {
+    expect(displayAddress('https://jaga.larmkx.com/server/uthm-batu-pahat'), ('jaga.larmkx.com/server/uthm-batu-pahat', true));
+    expect(displayAddress('http://10.0.0.5:8088'), ('10.0.0.5:8088', false));
   });
 }

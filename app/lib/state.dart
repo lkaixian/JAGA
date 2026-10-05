@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/material.dart' show ScaffoldMessengerState, SnackBar, ThemeMode;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,7 +31,61 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   String? host; // null = not joined to a server yet: show the lobby
   String siteName = 'JAGA';
   List<Site> recent = [];
-  double warnMm = 700, dangerMm = 900, mountMm = 1000;
+  final messenger = GlobalKey<ScaffoldMessengerState>();
+  Map<String, dynamic> _levels = {}; // host -> LevelPrefs json
+  ServerConfig? config; // what the joined server publishes; null = nothing
+  bool levelsNote = false; // server changed its levels while protection kept the user's
+  DateTime? _cfgAt;
+
+  LevelPrefs get levelPrefs => host == null || _levels[host] == null ? LevelPrefs() : LevelPrefs.fromJson(_levels[host]);
+  Levels get levels => activeLevels(levelPrefs, config);
+  double get warnMm => levels.$1.toDouble();
+  double get dangerMm => levels.$2.toDouble();
+  double get mountMm => levels.$3.toDouble();
+
+  Future<void> _saveLevels(LevelPrefs p) {
+    _levels[host!] = p.toJson();
+    notifyListeners();
+    return _prefs.setString('levels', jsonEncode(_levels));
+  }
+
+  Future<void> setCustom(bool on) {
+    final p = levelPrefs;
+    if (on) p.mine = levels; // start from what is active now
+    p.custom = on;
+    if (!on) levelsNote = false;
+    return _saveLevels(p);
+  }
+
+  Future<void> setProtect(bool on) => _saveLevels(levelPrefs..protect = on);
+  Future<void> saveCustom(Levels l) => _saveLevels(levelPrefs..mine = l);
+
+  /// At most once per 10 minutes unless [force]; a failure keeps the last known config.
+  Future<void> fetchConfig({bool force = false}) async {
+    final h = host, now = DateTime.now();
+    if (h == null || (!force && _cfgAt != null && now.difference(_cfgAt!) < const Duration(minutes: 10))) return;
+    _cfgAt = now;
+    try {
+      final c = await _api.config();
+      if (host != h) return;
+      config = c;
+      if (c == null) return;
+      final p = levelPrefs;
+      switch (levelAction(custom: p.custom, protect: p.protect, lastRev: p.lastRev, newRev: c.rev)) {
+        case LevelAction.overwriteCustom:
+          p.mine = c.levels;
+          messenger.currentState?.showSnackBar(SnackBar(content: Text('Levels updated from $siteName.')));
+        case LevelAction.keepAndNote:
+          levelsNote = p.lastRev != null; // first sight of a server is not a change
+        case LevelAction.adoptSilently || LevelAction.noChange:
+          break;
+      }
+      p.lastRev = c.rev;
+      await _saveLevels(p);
+    } catch (e) {
+      debugPrint('config fetch failed: $e');
+    }
+  }
 
   List<Node> nodes = [];
   final Map<int, List<Reading>> history = {}; // node id (ascending) -> readings, oldest first
@@ -65,9 +119,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     recent = [
       for (final j in jsonDecode(_prefs.getString('recent') ?? '[]') as List) Site.fromJson(j as Map<String, dynamic>)
     ];
-    warnMm = _prefs.getDouble('warn') ?? warnMm;
-    dangerMm = _prefs.getDouble('danger') ?? dangerMm;
-    mountMm = _prefs.getDouble('mount') ?? mountMm;
+    _levels = jsonDecode(_prefs.getString('levels') ?? '{}') as Map<String, dynamic>;
 
     await _notifier.initialize(
         settings: const InitializationSettings(
@@ -100,6 +152,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   void _start() {
     _apiClient = ApiClient(host!);
     _fails = 0;
+    _cfgAt = null;
     poll();
   }
 
@@ -112,7 +165,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) checkNotifications();
+    if (state == AppLifecycleState.resumed) {
+      checkNotifications();
+      fetchConfig(force: true);
+    }
     if (state == AppLifecycleState.paused) {
       _paused = true;
       _timer?.cancel();
@@ -133,6 +189,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     history.clear();
     serverStatus = null;
     link = LinkState.connected;
+    config = null;
+    levelsNote = false;
     _historyLoaded.clear();
     _lastStatus.clear();
     _lastHealth.clear();
@@ -183,16 +241,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> saveSettings(double warn, double danger, double mount) async {
-    warnMm = warn;
-    dangerMm = danger;
-    mountMm = mount;
-    await _prefs.setDouble('warn', warn);
-    await _prefs.setDouble('danger', danger);
-    await _prefs.setDouble('mount', mount);
-    notifyListeners();
-  }
-
   Node? nodeById(int id) => nodes.where((n) => n.id == id).firstOrNull;
   Reading? latestOf(int id) => history[id]!.lastOrNull;
 
@@ -228,6 +276,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _fails = 0;
       link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk, siteOk: serverStatus!.siteOk);
       lastOk = DateTime.now();
+      await fetchConfig();
       _checkAlerts();
     } catch (e) {
       debugPrint('poll failed (${e is TypeError || e is FormatException ? 'bad reply' : 'network'}): $e');

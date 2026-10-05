@@ -137,8 +137,67 @@ class Status {
       j['site_ok'] ?? true, (j['site_age_s'] as num?)?.toInt());
 }
 
+/// Water levels as (warning, danger, chart top) in mm.
+typedef Levels = (int, int, int);
+const defaultLevels = (700, 900, 1200);
+
+/// Levels a server publishes at /api/config.
+class ServerConfig {
+  final Levels levels;
+  final String rev;
+  ServerConfig(this.levels, this.rev);
+
+  /// Null when any field is missing or the wrong type: treated as not published.
+  static ServerConfig? tryParse(Object? j) {
+    if (j is! Map) return null;
+    final w = j['warn_mm'], d = j['danger_mm'], t = j['depth_mm'], r = j['rev'];
+    if (w is! num || d is! num || t is! num || r is! String || r.isEmpty) return null;
+    return ServerConfig((w.toInt(), d.toInt(), t.toInt()), r);
+  }
+}
+
+/// What to do when a config arrives (see AppState.fetchConfig).
+enum LevelAction { adoptSilently, overwriteCustom, keepAndNote, noChange }
+
+LevelAction levelAction({required bool custom, required bool protect, required String? lastRev, required String newRev}) =>
+    newRev == lastRev
+        ? LevelAction.noChange
+        : !custom
+            ? LevelAction.adoptSilently
+            : protect
+                ? LevelAction.keepAndNote
+                : LevelAction.overwriteCustom;
+
+/// Per-server level settings, kept as JSON in SharedPreferences.
+class LevelPrefs {
+  bool custom = false, protect = true;
+  Levels mine = defaultLevels;
+  String? lastRev;
+  LevelPrefs();
+  LevelPrefs.fromJson(Map<String, dynamic> j)
+      : custom = j['custom'] as bool? ?? false,
+        protect = j['protect'] as bool? ?? true,
+        mine = ((j['warn'] as num?)?.toInt() ?? 700, (j['danger'] as num?)?.toInt() ?? 900, (j['depth'] as num?)?.toInt() ?? 1200),
+        lastRev = j['lastRev'] as String?;
+  Map<String, dynamic> toJson() =>
+      {'custom': custom, 'protect': protect, 'warn': mine.$1, 'danger': mine.$2, 'depth': mine.$3, 'lastRev': lastRev};
+}
+
+/// The levels the app uses: the user's own, else the server's, else the defaults.
+Levels activeLevels(LevelPrefs p, ServerConfig? c) => p.custom ? p.mine : c?.levels ?? defaultLevels;
+
+/// Error text for the three custom levels, or null when valid.
+String? validateLevels(int? warn, int? danger, int? depth) {
+  if (warn == null || danger == null || depth == null || warn <= 0 || danger <= 0 || depth <= 0) {
+    return 'Enter a positive number in every field.';
+  }
+  if (warn >= danger) return 'Warning must be lower than danger.';
+  if (danger > depth) return 'Danger must not be higher than chart top.';
+  return null;
+}
+
 class ApiClient {
-  String host; // "192.168.x.x", "jaga-master.local", or a full https:// address
+  String host; // "jaga.larmkx.com", a hub site address, or a full https:// address
   ApiClient(this.host);
 
   Future<dynamic> _get(String path) async {
@@ -159,6 +218,8 @@ class ApiClient {
       rethrow;
     }
   }
+  /// Throws on 404 or other errors (old server); null when the reply lacks the fields.
+  Future<ServerConfig?> config() async => ServerConfig.tryParse(await _get('/api/config'));
   Future<List<Node>> nodes() => _list('/api/nodes', Node.fromJson);
   Future<List<Reading>> latest() => _list('/api/latest', Reading.fromJson);
 

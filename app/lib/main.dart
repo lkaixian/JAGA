@@ -43,6 +43,7 @@ class JagaApp extends StatelessWidget {
           theme: ThemeData(colorSchemeSeed: Colors.blue, useMaterial3: true),
           darkTheme: ThemeData(colorSchemeSeed: Colors.blue, brightness: Brightness.dark, useMaterial3: true),
           themeMode: state.themeMode,
+          scaffoldMessengerKey: state.messenger,
           home: Home(state),
         ),
       );
@@ -329,18 +330,40 @@ class _SettingsTabState extends State<_SettingsTab> {
     widget.s.checkNotifications();
   }
 
-  late final warn = TextEditingController(text: widget.s.warnMm.toStringAsFixed(0));
-  late final danger = TextEditingController(text: widget.s.dangerMm.toStringAsFixed(0));
-  late final mount = TextEditingController(text: widget.s.mountMm.toStringAsFixed(0));
+  late final warn = TextEditingController(text: widget.s.levels.$1.toString());
+  late final danger = TextEditingController(text: widget.s.levels.$2.toString());
+  late final depth = TextEditingController(text: widget.s.levels.$3.toString());
+  String? error;
+  late final bool _note = widget.s.levelsNote; // opening Settings once dismisses the note
 
-  Widget _field(String label, TextEditingController c, {bool number = true, String? help}) => Padding(
+  Widget _field(String label, TextEditingController c) => Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextField(
           controller: c,
-          keyboardType: number ? TextInputType.number : TextInputType.url,
-          decoration: InputDecoration(labelText: label, helperText: help, border: const OutlineInputBorder()),
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
         ),
       );
+
+  Widget _published(AppState s) {
+    final c = s.config;
+    final (w, d, t) = c?.levels ?? defaultLevels;
+    Widget row(String a, int v) => ListTile(dense: true, title: Text(a), trailing: Text('$v mm'));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(c == null ? 'Not published by this server' : 'Published by ${s.siteName}',
+          style: Theme.of(context).textTheme.titleSmall),
+      Opacity(opacity: c == null ? 0.5 : 1, child: Column(children: [row('Warning', w), row('Danger', d), row('Chart top', t)])),
+    ]);
+  }
+
+  void _save() {
+    final w = int.tryParse(warn.text.trim()), d = int.tryParse(danger.text.trim()), t = int.tryParse(depth.text.trim());
+    final e = validateLevels(w, d, t);
+    setState(() => error = e);
+    if (e != null) return;
+    widget.s.saveCustom((w!, d!, t!));
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
+  }
 
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
@@ -371,19 +394,34 @@ class _SettingsTabState extends State<_SettingsTab> {
           onSelectionChanged: (v) => widget.s.setThemeMode(v.first),
         ),
         const SizedBox(height: 12),
-        _field('Warning at (mm)', warn),
-        _field('Danger at (mm)', danger),
-        _field('Mount height (mm, chart top)', mount),
-        FilledButton(
-          onPressed: () {
-            widget.s.saveSettings(
-              double.tryParse(warn.text) ?? widget.s.warnMm,
-              double.tryParse(danger.text) ?? widget.s.dangerMm,
-              double.tryParse(mount.text) ?? widget.s.mountMm,
-            );
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
+        Text('Water level alerts', style: Theme.of(context).textTheme.titleMedium),
+        _published(widget.s),
+        if (_note || widget.s.levelsNote) const Text("The server's levels changed. Yours are kept."),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Use my own levels'),
+          value: widget.s.levelPrefs.custom,
+          onChanged: (v) {
+            widget.s.setCustom(v);
+            warn.text = widget.s.levels.$1.toString();
+            danger.text = widget.s.levels.$2.toString();
+            depth.text = widget.s.levels.$3.toString();
+            setState(() => error = null);
           },
-          child: const Text('Save'),
+        ),
+        if (widget.s.levelPrefs.custom) ...[
+          _field('Warning at (mm)', warn),
+          _field('Danger at (mm)', danger),
+          _field('Chart top (mm)', depth),
+          if (error != null) Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error))),
+          FilledButton(onPressed: _save, child: const Text('Save')),
+        ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Overwrite protection'),
+          subtitle: const Text('On: the server never changes your levels. Off: your levels are replaced when the server publishes new ones.'),
+          value: widget.s.levelPrefs.protect,
+          onChanged: widget.s.levelPrefs.custom ? widget.s.setProtect : null,
         ),
         const SizedBox(height: 16),
         const Text('Alerts only fire while the app is running.'),
