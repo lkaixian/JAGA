@@ -8,6 +8,7 @@ import urllib.request
 from contextlib import asynccontextmanager, closing
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from trend import analyze
@@ -19,6 +20,7 @@ COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "hu
         "distance_mm", "distance_stddev_mm", "water_level_mm")
 
 master = {"status": None, "status_at": 0.0, "nodes": None}
+health = {"master_ok": False, "last_ok": 0.0, "fails": 0}
 
 
 def db():
@@ -43,27 +45,46 @@ def fetch(path):
 
 
 def poll_once():
-    master["status"], master["status_at"] = fetch("/api/status"), time.time()
-    master["nodes"] = fetch("/api/nodes")
-    rows = fetch("/api/latest")
-    with closing(db()) as c, c:
-        for r in rows:
-            last = c.execute("SELECT log_timestamp_s, sender_timestamp_s FROM readings "
-                             "WHERE node_id=? ORDER BY id DESC LIMIT 1", (r["node_id"],)).fetchone()
-            # master re-serves the same newest reading until a new one lands; store each once
-            if last and (last[0], last[1]) == (r["log_timestamp_s"], r["sender_timestamp_s"]):
-                continue
-            c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
-                      (time.time(), *[r[k] for k in COLS]))
+    ok = 0
+    for key, path in (("status", "/api/status"), ("nodes", "/api/nodes")):
+        try:
+            master[key] = fetch(path)
+            ok += 1
+            if key == "status":
+                master["status_at"] = time.time()
+        except Exception:  # one endpoint failing must not block the others
+            pass
+    try:
+        rows = fetch("/api/latest")
+        ok += 1
+        with closing(db()) as c, c:
+            for r in rows:
+                last = c.execute("SELECT log_timestamp_s, sender_timestamp_s FROM readings "
+                                 "WHERE node_id=? ORDER BY id DESC LIMIT 1", (r["node_id"],)).fetchone()
+                # master re-serves the same newest reading until a new one lands; store each once
+                if last and (last[0], last[1]) == (r["log_timestamp_s"], r["sender_timestamp_s"]):
+                    continue
+                c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
+                          (time.time(), *[r[k] for k in COLS]))
+    except Exception:
+        pass
+    was = health["master_ok"]
+    if ok:
+        health.update(master_ok=True, last_ok=time.time(), fails=0)
+    else:
+        health["fails"] += 1
+        if health["fails"] >= 3:  # about 30 s at the normal poll rate
+            health["master_ok"] = False
+    if was and not health["master_ok"]:
+        print("master unreachable: readings have stopped", flush=True)
+    elif not was and health["master_ok"]:
+        print("master reachable again", flush=True)
 
 
 def poll_loop():
     while True:
-        try:
-            poll_once()
-        except Exception as e:  # master offline: keep serving stored data
-            print("poll failed:", e, flush=True)
-        time.sleep(POLL_S)
+        poll_once()
+        time.sleep(min(30, POLL_S * max(1, health["fails"])))  # back off 10, 20, 30 s while polls fail
 
 
 @asynccontextmanager
@@ -96,14 +117,25 @@ def check_node(node):
         raise HTTPException(400, "node must be 1 or higher")
 
 
+@app.get("/api/health")
+def healthz():
+    try:
+        with closing(db()) as c:
+            c.execute("SELECT 1 FROM readings LIMIT 1")
+    except sqlite3.Error:
+        return JSONResponse({"error": {"code": "db_unavailable", "message": "The server can't open its database."}}, 503)
+    return {"ok": True}
+
+
 @app.get("/api/status")
 def status():
     st = master["status"]
     if not st:
-        raise HTTPException(503, "master not reached yet")
+        return JSONResponse({"error": {"code": "master_unreachable",
+                                       "message": "The server hasn't reached the master node yet."}}, 503)
     elapsed = time.time() - master["status_at"]  # keep now_s ticking while the master is unreachable
     return {**st, "now_s": st["now_s"] + int(elapsed), "uptime_s": st["uptime_s"] + int(elapsed),
-            "master_age_s": int(elapsed)}
+            "master_age_s": int(elapsed), "master_ok": health["master_ok"]}
 
 
 @app.get("/api/nodes")
