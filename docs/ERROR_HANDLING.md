@@ -1,8 +1,9 @@
 # Error handling design
 
 Covers the slave and master firmware, the Python server, the dashboard and the Flutter app.
-Status: phases P0 and P1 are built and committed; P2 is in progress. Firmware changes are written but
-not yet compiled (no ESP-IDF toolchain in the dev shell). The build order is at the end.
+Status: all three phases (P0 to P2) are built and committed, plus the hub's "site offline" state. Firmware compiles with no
+warnings but has not been flashed or tried on hardware. Failure drills were run against the server and dashboard; the app
+and firmware were checked by unit tests, code review and builds only.
 
 ## 1. Principles
 
