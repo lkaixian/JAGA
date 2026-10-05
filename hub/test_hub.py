@@ -1,5 +1,6 @@
 """Hub checks: python hub/test_hub.py"""
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -67,8 +68,14 @@ try:
         for p in ("nodes", "latest", "history?node=1"):
             assert cl.get(f"/server/site-a/api/{p}").json() == []
 
+        rv = lambda w, d, p: hashlib.sha1(f"{w}:{d}:{p}".encode()).hexdigest()[:8]
+        dflt = {"warn_mm": 700, "danger_mm": 900, "depth_mm": 1200, "rev": rv(700, 900, 1200)}
+        assert cl.get("/server/site-a/api/config").json() == dflt  # before any heartbeat
+        assert cl.get("/server/nope/api/config").json()["error"]["code"] == "unknown_site"
+        assert cl.get("/server/site-p/api/config").status_code == 404
+
         # auth
-        u = "/hub/v1/sites/site-a/heartbeat"
+        u ="/hub/v1/sites/site-a/heartbeat"
         w1 = cl.post(u, json=hb(), headers=bearer("wrong"))
         w2 = cl.post("/hub/v1/sites/nope/heartbeat", json=hb(), headers=bearer(ta))
         assert w1.status_code == w2.status_code == 401 and w1.json() == w2.json()
@@ -92,6 +99,22 @@ try:
         nd = cl.get("/server/site-a/api/nodes").json()
         assert nd == [{"node_id": 1, "name": "Drain 1", "lat": 1.0, "lng": 2.0}, {"node_id": 2, "name": "Drain 2"}], nd
         cl.post("/hub/v1/sites/site-b/heartbeat", json=hb(), headers=bearer(tb))
+
+        # config: no config in the heartbeat so far -> defaults; then stored, served, and bad ones ignored
+        assert cl.get("/server/site-a/api/config").json() == dflt
+        c1 = {"warn_mm": 500, "danger_mm": 800, "depth_mm": 1000}
+        want = {**c1, "rev": rv(500, 800, 1000)}
+        assert cl.post(u, json={**hb(), "config": c1}, headers=bearer(ta)).status_code == 200
+        assert cl.get("/server/site-a/api/config").json() == want
+        assert cl.get("/server/site-b/api/config").json() == dflt  # per site
+        for bad in ({"warn_mm": 900, "danger_mm": 800, "depth_mm": 1000}, {"warn_mm": 1, "danger_mm": 2, "depth_mm": 1},
+                    {"warn_mm": 0, "danger_mm": 2, "depth_mm": 3}, {"warn_mm": "1", "danger_mm": 2, "depth_mm": 3},
+                    {"warn_mm": True, "danger_mm": 2, "depth_mm": 3}, {"warn_mm": 1.5, "danger_mm": 2, "depth_mm": 3},
+                    {"warn_mm": 1}, {}, None):
+            assert cl.post(u, json={**hb(), "config": bad}, headers=bearer(ta)).status_code == 200, bad
+            assert cl.get("/server/site-a/api/config").json() == want, bad
+        assert cl.post(u, json=hb(), headers=bearer(ta)).status_code == 200  # absent
+        assert cl.get("/server/site-a/api/config").json() == want
 
         # readings: idempotent, bad rows dropped, limits
         ru = "/hub/v1/sites/site-a/readings"
@@ -166,6 +189,16 @@ try:
         with sqlite3.connect(os.environ["HUB_DB"]) as c:
             assert c.execute("SELECT COUNT(*) FROM readings").fetchone()[0] == 0
         assert cl.get("/server/site-a/api/latest").status_code == 404
+
+    # an old database without config_json is migrated, and a second start is harmless
+    old = os.path.join(tmp, "old.db")
+    with sqlite3.connect(old) as c:
+        c.executescript(admin.SCHEMA)
+        c.execute("INSERT INTO sites (slug, token_hash) VALUES ('old-one', 'x')")
+        assert "config_json" not in [r[1] for r in c.execute("PRAGMA table_info(sites)")]
+        hub.init_schema(c)
+        hub.init_schema(c)
+        assert c.execute("SELECT config_json FROM sites").fetchall() == [(None,)]
 
     # a broken database answers JSON 503, not a stack trace
     os.environ["HUB_DB"] = hub.DB = os.path.join(tmp, "missing", "x.db")

@@ -216,4 +216,23 @@ A.node_ids = lambda: 1 / 0  # unhandled error: no text leaks
 r = TestClient(A.app, raise_server_exceptions=False).get("/api/latest")
 shape(r, 500, "internal")
 assert "division" not in r.text
+
+# water level config: defaults, env override, invalid env falls back, rev follows the values
+import hashlib
+assert c.get("/api/config").json() == {"warn_mm": 700, "danger_mm": 900, "depth_mm": 1200,
+                                       "rev": hashlib.sha1(b"700:900:1200").hexdigest()[:8]}
+for env, want in (({"WARN_MM": "500", "DANGER_MM": "800", "DEPTH_MM": "1000"}, (500, 800, 1000)),
+                  ({"WARN_MM": "900"}, (700, 900, 1200)),  # warn not below danger
+                  ({"DEPTH_MM": "800"}, (700, 900, 1200)),  # danger above depth
+                  ({"WARN_MM": "abc"}, (700, 900, 1200)), ({"WARN_MM": "-5"}, (700, 900, 1200)),
+                  ({"DANGER_MM": "900.5"}, (700, 900, 1200))):
+    os.environ.update(env)
+    try:
+        assert A.read_config() == want, env
+    finally:
+        for k in env:
+            os.environ.pop(k)
+assert A.cfg_rev(700, 900, 1200) != A.cfg_rev(700, 900, 1201) != A.cfg_rev(701, 900, 1200)
+A.WARN_MM, A.DANGER_MM, A.DEPTH_MM = 500, 800, 1000
+assert c.get("/api/config").json() == {"warn_mm": 500, "danger_mm": 800, "depth_mm": 1000, "rev": A.cfg_rev(500, 800, 1000)}
 print("poll ok")

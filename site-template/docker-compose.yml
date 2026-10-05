@@ -13,6 +13,9 @@ services:
       HUB_URL: ${HUB_URL:?set HUB_URL in .env}
       SITE_SLUG: ${SITE_SLUG:?set SITE_SLUG in .env}
       SITE_TOKEN: ${SITE_TOKEN:?set SITE_TOKEN in .env}
+      WARN_MM: ${WARN_MM:-700}
+      DANGER_MM: ${DANGER_MM:-900}
+      DEPTH_MM: ${DEPTH_MM:-1200}
     volumes:
       - ./data:/data
     healthcheck:

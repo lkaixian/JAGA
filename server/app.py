@@ -1,4 +1,5 @@
 """JAGA API: polls the ESP32 master into SQLite and serves the same /api/* shape, plus /api/trend."""
+import hashlib
 import json
 import math
 import os
@@ -26,6 +27,25 @@ RETAIN_DAYS = 180  # readings older than this are deleted, once a day
 API_VERSION = 1  # bump on a breaking change so old apps can say so
 COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "humidity_pct",
         "distance_mm", "distance_stddev_mm", "water_level_mm")
+
+def read_config():
+    try:
+        w, d, p = (int(os.environ.get(k, v)) for k, v in (("WARN_MM", 700), ("DANGER_MM", 900), ("DEPTH_MM", 1200)))
+        if 0 < w < d <= p:
+            return w, d, p
+    except ValueError:
+        pass
+    print("WARN_MM, DANGER_MM and DEPTH_MM must be positive whole numbers with warn below danger and danger "
+          "at most depth. Using 700, 900 and 1200.", flush=True)
+    return 700, 900, 1200
+
+
+WARN_MM, DANGER_MM, DEPTH_MM = read_config()
+
+
+def cfg_rev(warn, danger, depth):  # same 3 lines in hub/app.py (it cannot import server/): keep identical
+    return hashlib.sha1(f"{warn}:{danger}:{depth}".encode()).hexdigest()[:8]
+
 
 master = {"status": None, "nodes": None}  # status is one (dict, fetched_at) tuple: a single assignment, no torn read
 health = {"master_ok": False, "last_ok": 0.0, "fails": 0, "db_ok": True}
@@ -220,7 +240,8 @@ def push_once():
     s = site()
     ans = hub_post("heartbeat", {
         "name": s["name"], "lat": s["lat"], "lng": s["lng"], "api_version": API_VERSION, "site_time": time.time(),
-        "master_ok": health["master_ok"], "status": status() if master["status"] else None, "nodes": nodes()})
+        "master_ok": health["master_ok"], "status": status() if master["status"] else None, "nodes": nodes(),
+        "config": {"warn_mm": WARN_MM, "danger_mm": DANGER_MM, "depth_mm": DEPTH_MM}})
     push["last_ok"] = time.time()  # the hub answered; a row failure below still backs off
     push_rows(float(ans["latest_received_at"]))
 
@@ -373,6 +394,13 @@ def site():
             "logo": os.environ.get("SITE_LOGO", "/logo.png"),  # path on this server, or a full URL
             "lat": sum(p[0] for p in pts) / len(pts) if pts else None,
             "lng": sum(p[1] for p in pts) / len(pts) if pts else None}
+
+
+@app.get("/api/config")
+def config():
+    """Water level thresholds and drain depth, so the app draws the same lines the server alerts on."""
+    return {"warn_mm": WARN_MM, "danger_mm": DANGER_MM, "depth_mm": DEPTH_MM,
+            "rev": cfg_rev(WARN_MM, DANGER_MM, DEPTH_MM)}
 
 
 class Pos(BaseModel):

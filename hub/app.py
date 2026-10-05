@@ -38,11 +38,35 @@ def db():
     return c
 
 
+DEFAULT_CFG = {"warn_mm": 700, "danger_mm": 900, "depth_mm": 1200}
+
+
+def cfg_rev(warn, danger, depth):  # same 3 lines in server/app.py (the hub cannot import server/): keep identical
+    return hashlib.sha1(f"{warn}:{danger}:{depth}".encode()).hexdigest()[:8]
+
+
+def good_cfg(c):
+    """The three thresholds if c is a valid config, else None."""
+    if not isinstance(c, dict):
+        return None
+    v = [c.get(k) for k in DEFAULT_CFG]
+    if not all(isinstance(x, int) and not isinstance(x, bool) and 0 < x < 2**31 for x in v) or not v[0] < v[1] <= v[2]:
+        return None
+    return dict(zip(DEFAULT_CFG, v))
+
+
+def init_schema(c):
+    c.executescript(SCHEMA)
+    # config_json lives here, not in SCHEMA (admin.py), so an existing database gets it too
+    if "config_json" not in [r[1] for r in c.execute("PRAGMA table_info(sites)")]:
+        c.execute("ALTER TABLE sites ADD COLUMN config_json TEXT")
+
+
 @asynccontextmanager
 async def lifespan(_):
     try:
         with closing(db()) as c:
-            c.executescript(SCHEMA)
+            init_schema(c)
     except Exception as e:  # keep serving: requests answer db_unavailable until it recovers
         print("database unavailable at startup:", repr(e), flush=True)
     yield
@@ -130,6 +154,7 @@ class Heartbeat(BaseModel):
     master_ok: bool
     status: dict | None = None
     nodes: list[NodeIn] = Field(max_length=200)
+    config: dict | None = None  # checked by good_cfg: a bad one must not fail the heartbeat
 
 
 def newest_received(c, slug):
@@ -153,6 +178,8 @@ def save_heartbeat(row, hb):
             "nodes_json": json.dumps([n.model_dump() for n in hb.nodes])}
     if hb.status is not None:  # a null status keeps the last known one, which the status endpoint labels as old
         sets["status_json"] = json.dumps({"at": now, "st": hb.status})
+    if cfg := good_cfg(hb.config):  # invalid or absent keeps the stored one
+        sets["config_json"] = json.dumps(cfg)
     for k in ("name", "lat", "lng"):  # admin-set values win; the site fills the rest
         if k not in locked and getattr(hb, k) is not None:
             sets[k] = getattr(hb, k)
@@ -305,6 +332,14 @@ def site(slug: str):
     # absolute, so a client that joins this site's base URL (.../server/<slug>) doesn't look for it under the slug
     return {"name": row["name"] or slug, "logo": PUBLIC + logo if logo.startswith("/") else logo,
             "lat": row["lat"], "lng": row["lng"]}
+
+
+@app.get(API + "/config")
+def config(slug: str):
+    row = approved(slug)
+    cfg = good_cfg(json.loads(row["config_json"])) if row["config_json"] else None
+    cfg = cfg or DEFAULT_CFG
+    return {**cfg, "rev": cfg_rev(*cfg.values())}
 
 
 @app.get(API + "/latest")

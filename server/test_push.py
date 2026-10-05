@@ -84,7 +84,8 @@ assert A.push_step() == 30
 path, hd, _, body = posts("heartbeat")[0]
 assert path == "/hub/v1/sites/my-site/heartbeat" and hd["Authorization"] == "Bearer tok"
 assert hd["Content-Type"] == "application/json" and hd["User-Agent"] == "jaga-site/1"
-assert set(body) == {"name", "lat", "lng", "api_version", "site_time", "master_ok", "status", "nodes"}
+assert set(body) == {"name", "lat", "lng", "api_version", "site_time", "master_ok", "status", "nodes", "config"}
+assert body["config"] == {"warn_mm": 700, "danger_mm": 900, "depth_mm": 1200}
 assert body["name"] == "JAGA" and body["api_version"] == 1 and body["status"] is None and len(body["nodes"]) >= 5
 h = c.get("/api/health").json()["hub"]
 assert h["ok"] is True and h["last_push_s"] < 5 and h["pending_rows"] == 0
