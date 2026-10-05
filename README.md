@@ -107,7 +107,7 @@ One-time setup, about 15 minutes. No router ports are opened and the master node
 
 1. **Domain on Cloudflare.** Add `larmkx.com` to a free Cloudflare account and change the nameservers at your registrar to the two Cloudflare gives you. Wait until Cloudflare shows the domain as Active.
 2. **Create the tunnel.** Cloudflare dashboard > Zero Trust > Networks > Tunnels > Create a tunnel > Cloudflared. Name it `jaga`. On the next screen copy the long token (the text after `--token`). Skip the install step: Docker runs it for you.
-3. **Public hostname.** In the tunnel's Public Hostname tab add: subdomain `jaga`, domain `larmkx.com`, service type `HTTP`, URL `nginx:80`. Cloudflare creates the DNS record itself.
+3. **Public hostname.** In the tunnel's Public Hostname tab add: subdomain `jaga`, domain `larmkx.com`, service `http://nginx:80` (if the form has a separate type dropdown, pick HTTP and enter `nginx:80`; if it has one box, type the whole `http://nginx:80`). Cloudflare creates the DNS record itself.
 4. **Give the token to Docker.** In `C:\JAGA` create a file named `.env` (it is gitignored, never commit it) containing:
    ```
    TUNNEL_TOKEN=<the token>
