@@ -446,14 +446,14 @@ async function fetchApi(){
   const failed = [st, ...results].filter(r => r.status === 'rejected');
   failed.forEach(r => console.error(r.reason));
   pollErr = failed.map(r => r.reason.message).join('; ');       // shown as a tooltip on the banner and pill
-  if(results.every(r => r.status === 'rejected') && (st.status === 'rejected' || results.every(r => r.reason.bad))) throw failed[0].reason;
+  if(results.every(r => r.status === 'rejected')) throw results[0].reason;   // no history at all = failed poll, whatever /api/status said
   apiStatus = st.status === 'fulfilled' ? st.value : null;     // a failed /api/status alone is not a failed poll
   if(st.status === 'rejected' && st.reason.code === 'master_unreachable') apiStatus = { master_ok: false };  // server up, master never reached
   NODES.forEach((n, i) => {
     if(results[i].status === 'rejected') return;             // keep what is on screen for this node
     const rows = results[i].value;
     // newest raw row decides live / fault / no signal; older valid points still feed chart and rate
-    meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s } : null;
+    meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s, srv: rows[0].received_at != null } : null;
     store[n.id] = rows.slice().reverse()
       .filter(r => r.water_level_mm !== SONAR_ERR)
       .map(r => ({
@@ -545,6 +545,11 @@ function severity(level, rate){
 
 const STALE_S = 180;                 // section 7 of docs/ERROR_HANDLING.md
 
+// Seconds since the newest packet. Server-clock rows use the browser clock; master-clock rows (no
+// received_at) use apiStatus.now_s, same clock. null = unknown (no now_s), callers treat it as live.
+const ageOf = m => m.srv ? Date.now()/1000 - m.rx
+  : Number.isFinite(apiStatus?.now_s) ? Math.max(0, apiStatus.now_s - m.rx) : null;
+
 // One place that decides live | fault | nosignal | nodata. sev is -1 when there is no trustworthy level.
 function nodeInfo(n){
   const buf = store[n.id], m = meta[n.id], p = buf[buf.length-1];
@@ -552,7 +557,7 @@ function nodeInfo(n){
   if(SOURCE.mode === 'api'){
     if(!m) st = 'nodata';
     else {
-      age = Date.now()/1000 - m.rx;
+      age = ageOf(m) ?? 0;
       st = age >= STALE_S ? 'nosignal' : m.fault ? 'fault' : 'live';   // an old fault is just silence
     }
   } else if(!p) st = 'nodata';
@@ -776,9 +781,9 @@ function render(){
 
   if(SOURCE.mode === 'simulate'){
     $('seenV').innerHTML = `${(Date.now()/1000|0) % 60} <small>s ago</small>`;
-  } else if(meta[n.id]?.rx){
+  } else if(meta[n.id]?.rx && ageOf(meta[n.id]) != null){
     // ponytail: browser clock vs server clock; fine on one machine, skews if they differ
-    const age = Math.max(0, Math.round(Date.now()/1000 - meta[n.id].rx));
+    const age = Math.max(0, Math.round(ageOf(meta[n.id])));
     $('seenV').innerHTML = age < 120 ? `${age} <small>s ago</small>` : `${Math.round(age/60)} <small>min ago</small>`;
   } else {
     $('seenV').innerHTML = '—';
