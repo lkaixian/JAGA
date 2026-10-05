@@ -226,7 +226,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         if (list.length > maxPoints) list.removeAt(0);
       }
       _fails = 0;
-      link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk);
+      link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk, siteOk: serverStatus!.siteOk);
       lastOk = DateTime.now();
       _checkAlerts();
     } catch (e) {

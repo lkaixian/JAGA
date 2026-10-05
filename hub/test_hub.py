@@ -84,7 +84,7 @@ try:
         r = cl.post(u, json=hb(), headers=bearer(ta))
         assert r.status_code == 200 and r.json()["ok"] and r.json()["latest_received_at"] == 0.0, r.text
         s = cl.get("/server/site-a/api/site").json()
-        assert s == {"name": "Alpha", "logo": "/logo.png", "lat": 1.5, "lng": 103.5}, s
+        assert s == {"name": "Alpha", "logo": "https://hub.test/logo.png", "lat": 1.5, "lng": 103.5}, s  # absolute, not relative to the slug
         assert cl.post(u, json={"name": "x"}, headers=bearer(ta)).status_code == 422
         st = cl.get("/server/site-a/api/status").json()
         assert st["site_ok"] is True and st["master_ok"] is True and st["api_version"] == 1

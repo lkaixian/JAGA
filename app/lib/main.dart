@@ -147,10 +147,13 @@ class _LinkBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final down = s.link == LinkState.serverDown;
+    final site = s.link == LinkState.siteDown;
+    final down = s.link == LinkState.serverDown || site;
     final at = down ? s.lastOk : s.masterLastAt;
     final text = s.serverTooNew
         ? tooNewMsg
+        : site
+        ? siteOfflineText(DateTime.now(), s.serverStatus?.siteAgeS)
         : down
         ? "Can't reach the server.${at == null ? '' : ' Showing data from ${_hm(at)}.'}"
         : "The server can't reach the master node.${at == null ? '' : ' Readings stopped at ${_hm(at)}.'}";

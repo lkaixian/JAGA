@@ -129,6 +129,26 @@ void healthTests() {
     expect(linkState(serverReachable: false, masterOk: true), LinkState.serverDown);
     expect(linkState(serverReachable: true, masterOk: false), LinkState.masterDown);
     expect(linkState(serverReachable: true, masterOk: true), LinkState.connected);
+    expect(linkState(serverReachable: true, masterOk: false, siteOk: false), LinkState.siteDown);
+    expect(linkState(serverReachable: false, masterOk: true, siteOk: false), LinkState.serverDown);
+
+    final t = DateTime(2026, 1, 1, 14, 35, 10);
+    expect(siteOfflineText(t, 190), 'This site is offline. Showing data from 14:32.');
+    expect(siteOfflineText(t, null), 'This site is offline.');
+    final h = Status.fromJson({'now_s': 1, 'uptime_s': 1, 'rtc_ok': true, 'sd_ok': true, 'site_ok': false, 'site_age_s': 95});
+    expect((h.siteOk, h.siteAgeS), (false, 95));
+    expect(Status.fromJson({'now_s': 1, 'uptime_s': 1, 'rtc_ok': true, 'sd_ok': true}).siteAgeS, isNull);
+
+    expect(apiUrl('https://h.example/server/uthm', '/api/status'), 'https://h.example/server/uthm/api/status');
+    expect(apiUrl('https://h.example/server/uthm/', '/api/status'), 'https://h.example/server/uthm/api/status');
+    expect(apiUrl('192.168.1.5', '/api/status'), 'http://192.168.1.5/api/status');
+
+    final o = Site.fromJson({'name': 'A', 'url': 'https://h.example/server/a', 'online': false, 'last_seen_s': 190});
+    expect((o.offline, o.lastSeenS), (true, 190));
+    expect(Site.fromJson(o.toJson()).lastSeenS, 190);
+    expect(Site.fromJson({'name': 'B', 'url': 'https://b.example'}).offline, isFalse);
+    expect(lastSeenText(t, 190), 'Last seen 14:32');
+    expect(lastSeenText(t, null), 'Never reported');
   });
 }
 

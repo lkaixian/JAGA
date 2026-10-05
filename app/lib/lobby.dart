@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
+import 'api.dart' show hm;
 import 'main.dart' show ThemeToggle;
 import 'state.dart';
 
@@ -16,10 +17,15 @@ class Site {
   final String name, url;
   final double? lat, lng;
   final String? logo; // path on the server or a full URL
-  Site(this.name, this.url, [this.lat, this.lng, this.logo]);
+  final bool? online; // hub directory only; null = no information
+  final int? lastSeenS;
+  Site(this.name, this.url, [this.lat, this.lng, this.logo, this.online, this.lastSeenS]);
   factory Site.fromJson(Map<String, dynamic> j) => Site(j['name'], (j['url'] as String).replaceAll(RegExp(r'/+$'), ''),
-      (j['lat'] as num?)?.toDouble(), (j['lng'] as num?)?.toDouble(), j['logo'] as String?);
-  Map<String, dynamic> toJson() => {'name': name, 'url': url, 'lat': lat, 'lng': lng, 'logo': logo};
+      (j['lat'] as num?)?.toDouble(), (j['lng'] as num?)?.toDouble(), j['logo'] as String?,
+      j['online'] as bool?, (j['last_seen_s'] as num?)?.toInt());
+  Map<String, dynamic> toJson() =>
+      {'name': name, 'url': url, 'lat': lat, 'lng': lng, 'logo': logo, 'online': online, 'last_seen_s': lastSeenS};
+  bool get offline => online == false;
 }
 
 /// Relative logo path joined to the server url; full URLs kept.
@@ -56,6 +62,20 @@ enum PingTone { good, ok, slow, offline }
 
 PingTone pingTone(int? ms) => ms == null ? PingTone.offline : ms < 100 ? PingTone.good : ms < 300 ? PingTone.ok : PingTone.slow;
 String pingLabel(int? ms) => ms == null ? 'offline' : '$ms ms';
+
+/// Red chip for a hub site that has gone quiet.
+class OfflineChip extends StatelessWidget {
+  const OfflineChip({super.key});
+  @override
+  Widget build(BuildContext context) => const Chip(
+        visualDensity: VisualDensity.compact,
+        side: BorderSide(color: Colors.red),
+        label: Text('site offline', style: TextStyle(color: Colors.red, fontSize: 12)),
+      );
+}
+
+String lastSeenText(DateTime now, int? ageS) =>
+    ageS == null ? 'Never reported' : 'Last seen ${hm(now.subtract(Duration(seconds: ageS)))}';
 
 String _bare(String url) => url.replaceFirst(RegExp(r'^https?://'), '');
 String _km1(double km) => km < 10 ? km.toStringAsFixed(1) : km.toStringAsFixed(0);
@@ -118,7 +138,7 @@ Future<bool> confirmJoin(BuildContext context, Site site, {double? km, int? ping
             const SizedBox(height: 4),
             Text(loc),
             const SizedBox(height: 8),
-            PingChip(ping),
+            if (site.offline) ...[Text(lastSeenText(DateTime.now(), site.lastSeenS)), const OfflineChip()] else PingChip(ping),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
@@ -278,7 +298,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       final near = nearestSite(sites, pos!.latitude, pos!.longitude);
       if (near != null && !_declined.contains(near.url)) {
         setState(() => note = 'Checking ${near.name}…');
-        final ping = await pingMs(near.url);
+        final ping = near.offline ? null : await pingMs(near.url);
         if (!mounted) return;
         if (await confirmJoin(context, near, km: _km(near), ping: ping)) {
           setState(() => note = 'Joining ${near.name}…');
@@ -292,7 +312,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       busy = false;
       note = pos == null ? 'Pick a server.' : 'Servers near you';
     });
-    for (final site in sites) {
+    for (final site in sites.where((s) => !s.offline)) {
       pingMs(site.url).then((ms) {
         if (mounted) setState(() => pings[site.url] = ms);
       });
@@ -304,7 +324,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       busy = true;
       error = null;
     });
-    final ping = pings.containsKey(site.url) ? pings[site.url] : await pingMs(site.url);
+    final ping = site.offline || pings.containsKey(site.url) ? pings[site.url] : await pingMs(site.url);
     if (!mounted) return;
     if (!await confirmJoin(context, site, km: _km(site), ping: ping)) {
       if (mounted) setState(() => busy = false);
@@ -379,8 +399,9 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       child: ListTile(
         leading: SiteAvatar(site),
         title: Text(site.name),
-        subtitle: Text(_bare(site.url) + (km == null ? '' : ' · ${_km1(km)} km')),
-        trailing: PingChip(pings[site.url], loading: !pings.containsKey(site.url)),
+        subtitle: Text(_bare(site.url) + (km == null ? '' : ' · ${_km1(km)} km') +
+            (site.offline ? '\n${lastSeenText(DateTime.now(), site.lastSeenS)}' : '')),
+        trailing: site.offline ? const OfflineChip() : PingChip(pings[site.url], loading: !pings.containsKey(site.url)),
         onTap: busy ? null : () => _join(site),
       ),
     );

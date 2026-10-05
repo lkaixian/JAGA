@@ -10,7 +10,7 @@ const _dhtErr = -999; // DHT22 read failed
 enum NodeStatus { normal, watch, alert, error }
 
 /// Where the break is (docs/ERROR_HANDLING.md section 2).
-enum LinkState { connected, masterDown, serverDown }
+enum LinkState { connected, masterDown, siteDown, serverDown }
 
 enum NodeHealth { live, fault, noSignal, noData }
 
@@ -62,9 +62,22 @@ String? errorCode(String body) {
   }
 }
 
-/// Server unreachable beats master unreachable beats connected.
-LinkState linkState({required bool serverReachable, required bool masterOk}) =>
-    !serverReachable ? LinkState.serverDown : (!masterOk ? LinkState.masterDown : LinkState.connected);
+/// Server unreachable beats site offline (hub only) beats master unreachable beats connected.
+LinkState linkState({required bool serverReachable, required bool masterOk, bool siteOk = true}) => !serverReachable
+    ? LinkState.serverDown
+    : !siteOk
+        ? LinkState.siteDown
+        : (!masterOk ? LinkState.masterDown : LinkState.connected);
+
+String hm(DateTime t) => t.toIso8601String().substring(11, 16);
+
+/// Banner for a hub site that went quiet; [ageS] is seconds since the hub last heard from it.
+String siteOfflineText(DateTime now, int? ageS) =>
+    'This site is offline.${ageS == null ? '' : ' Showing data from ${hm(now.subtract(Duration(seconds: ageS)))}.'}';
+
+/// [host] may carry a path (a hub serves sites under /server/SLUG); [path] starts with /.
+String apiUrl(String host, String path) =>
+    (host.startsWith('http') ? host : 'http://$host').replaceAll(RegExp(r'/+$'), '') + path;
 
 /// [nowS] is Unix time in seconds (the device clock), the same scale as [Reading.receivedAt];
 /// the master's own now_s is not. Silence wins over a fault.
@@ -115,9 +128,13 @@ class Status {
   final bool rtcOk, sdOk, masterOk; // masterOk is absent when talking to the master directly
   final int? masterAgeS;
   final int apiVersion; // absent on the master firmware: version 1
-  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk, [this.masterOk = true, this.masterAgeS, this.apiVersion = 1]);
+  final bool siteOk; // hub only; absent = no information = ok
+  final int? siteAgeS;
+  Status(this.nowS, this.uptimeS, this.rtcOk, this.sdOk,
+      [this.masterOk = true, this.masterAgeS, this.apiVersion = 1, this.siteOk = true, this.siteAgeS]);
   factory Status.fromJson(Map<String, dynamic> j) => Status(j['now_s'], j['uptime_s'], j['rtc_ok'],
-      j['sd_ok'], j['master_ok'] ?? true, (j['master_age_s'] as num?)?.toInt(), (j['api_version'] as num?)?.toInt() ?? 1);
+      j['sd_ok'], j['master_ok'] ?? true, (j['master_age_s'] as num?)?.toInt(), (j['api_version'] as num?)?.toInt() ?? 1,
+      j['site_ok'] ?? true, (j['site_age_s'] as num?)?.toInt());
 }
 
 class ApiClient {
@@ -125,7 +142,7 @@ class ApiClient {
   ApiClient(this.host);
 
   Future<dynamic> _get(String path) async {
-    final res = await http.get(Uri.parse('${host.startsWith('http') ? host : 'http://$host'}$path')).timeout(const Duration(seconds: 5));
+    final res = await http.get(Uri.parse(apiUrl(host, path))).timeout(const Duration(seconds: 5));
     if (res.statusCode != 200) throw ApiException(res.statusCode, errorCode(res.body));
     return jsonDecode(res.body);
   }

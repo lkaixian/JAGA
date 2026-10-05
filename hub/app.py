@@ -301,7 +301,10 @@ def set_node_pos(slug: str, node_id: int):
 @app.get(API + "/site")
 def site(slug: str):
     row = approved(slug)
-    return {"name": row["name"] or slug, "logo": row["logo"] or "/logo.png", "lat": row["lat"], "lng": row["lng"]}
+    logo = row["logo"] or "/logo.png"
+    # absolute, so a client that joins this site's base URL (.../server/<slug>) doesn't look for it under the slug
+    return {"name": row["name"] or slug, "logo": PUBLIC + logo if logo.startswith("/") else logo,
+            "lat": row["lat"], "lng": row["lng"]}
 
 
 @app.get(API + "/latest")
