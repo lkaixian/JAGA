@@ -29,6 +29,10 @@ Ultrasonic water-level sensors in campus drains send readings by nRF24 radio to 
 - Water levels (warning, danger, chart top) are published by each server at `/api/config`. In the app they are the defaults; "Use my own levels" overrides them per server, and "Overwrite protection" (on by default) stops the server replacing custom values.
 - Writes (moving a map pin) are blocked for traffic arriving through the tunnel.
 
+## Master on another network (push mode)
+
+If the server can't reach the master on the LAN, the master POSTs readings itself. Server `.env`: `MASTER_URL=` (empty, turns polling off) and `INGEST_TOKEN=<long random>`. Firmware `master/main/node_config.h`: `INGEST_URL "https://jaga.larmkx.com/api/ingest"` and the same token as `INGEST_TOKEN`. Endpoint `POST /api/ingest` (`server/app.py`, test `server/test_ingest.py`); nginx lets it through the tunnel, everything else under `/api/` stays read-only there. The master queues 64 readings while offline (RAM only, lost on reboot). Compiles; never run on hardware.
+
 ## Running it
 
 ```

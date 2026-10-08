@@ -25,3 +25,10 @@
 // the Flutter app. TODO: point this at the real deployment network.
 #define WIFI_SSID  "CHANGE_ME"
 #define WIFI_PASS  "CHANGE_ME"
+
+// Push readings to a server on another network (the server can't poll this master).
+// POSTs {"rows":[...],"status":{...}} to INGEST_URL with "Authorization: Bearer INGEST_TOKEN".
+// Leave INGEST_URL empty to only serve /api/* for a server on the same Wi-Fi.
+// The token must equal INGEST_TOKEN in the server's .env. Do not commit the real one.
+#define INGEST_URL    ""   // e.g. "https://jaga.larmkx.com/api/ingest"
+#define INGEST_TOKEN  "CHANGE_ME"

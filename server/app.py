@@ -1,5 +1,6 @@
 """JAGA API: polls the ESP32 master into SQLite and serves the same /api/* shape, plus /api/trend."""
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -12,7 +13,7 @@ import urllib.parse
 import urllib.request
 from contextlib import asynccontextmanager, closing
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -21,6 +22,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from trend import analyze
 
 MASTER = os.environ.get("MASTER_URL", "http://jaga-master.local").rstrip("/")  # use the IP in Docker: no mDNS
+# Set MASTER_URL empty and INGEST_TOKEN to let a master on another network POST its readings to /api/ingest instead.
+INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
+INGEST_STALE_S = 120  # no POST for this long = master unreachable
 DB = os.environ.get("DB_PATH", "/data/jaga.db")
 POLL_S = 10
 RETAIN_DAYS = 180  # readings older than this are deleted, once a day
@@ -201,6 +205,14 @@ def poll_loop():
         time.sleep(min(30, POLL_S * max(1, health["fails"])))  # back off 10, 20, 30 s while polls fail
 
 
+def ingest_watch():
+    while True:
+        time.sleep(10)
+        if health["master_ok"] and time.time() - health["last_ok"] > INGEST_STALE_S:
+            health["master_ok"] = False
+            print("master unreachable: readings have stopped", flush=True)
+
+
 def hub_on():
     return bool(HUB_URL and SITE_SLUG and SITE_TOKEN)
 
@@ -280,7 +292,7 @@ async def lifespan(_):
     except Exception as e:  # keep serving: /api/health reports it and the poll retries init_db
         health["db_ok"] = False
         print("database unavailable at startup:", repr(e), flush=True)
-    threading.Thread(target=poll_loop, daemon=True).start()
+    threading.Thread(target=poll_loop if MASTER else ingest_watch, daemon=True).start()
     if hub_on():
         threading.Thread(target=push_loop, daemon=True, name="push").start()
     yield
@@ -351,6 +363,24 @@ def healthz():
         "last_push_s": None if push["last_ok"] is None else time.time() - push["last_ok"],
         "pending_rows": push["pending"]}
     return {"ok": True, "rejected": rejected, "hub": hub}
+
+
+@app.post("/api/ingest")
+def ingest(body: dict, authorization: str = Header("")):
+    """The master pushes {"rows": [...], "status": {...}} here when the server can't poll it."""
+    if not INGEST_TOKEN or not hmac.compare_digest(authorization.encode(), f"Bearer {INGEST_TOKEN}".encode()):
+        return err(401, "unauthorized", "The ingest token is wrong or not set.")
+    rows, st = body.get("rows"), body.get("status")
+    if not isinstance(rows, list):
+        return err(400, "bad_request", "rows must be a list.")
+    try:
+        store(rows)
+    except sqlite3.Error:
+        return err(503, "db_unavailable", "The server can't open its database.")
+    if isinstance(st, dict) and all(isinstance(st.get(k), int) for k in ("now_s", "uptime_s")):
+        master["status"] = (st, time.time())
+    health.update(master_ok=True, last_ok=time.time(), fails=0)
+    return {"ok": True}
 
 
 @app.get("/api/status")

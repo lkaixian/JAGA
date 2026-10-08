@@ -9,3 +9,5 @@ __pycache__/
 downloads/
 .env
 hub-data/
+pi-server/
+pi-server.tar.gz

@@ -4,7 +4,8 @@ services:
   api:
     build: ./server
     environment:
-      MASTER_URL: ${MASTER_URL:-http://192.168.1.50}
+      MASTER_URL: ${MASTER_URL-http://192.168.1.50}  # empty = don't poll; the master pushes to /api/ingest
+      INGEST_TOKEN: ${INGEST_TOKEN:-}
       SITE_NAME: ${SITE_NAME:-UTHM Parit Raja}
       SITE_LOGO: ${SITE_LOGO:-/uthm.png}
       # Set all three to push this site's data to a hub; leave empty to run standalone.

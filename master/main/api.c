@@ -14,6 +14,8 @@
 #include "nvs_flash.h"
 #include "mdns.h"
 #include "cJSON.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 
 #include "api.h"
 #include "node_config.h"
@@ -46,6 +48,10 @@ static api_reading_t s_history[MAX_NODES + 1][HISTORY_LEN];
 static int s_history_count[MAX_NODES + 1] = {0};
 static int s_history_next[MAX_NODES + 1]  = {0}; // next slot this node will write
 static SemaphoreHandle_t s_history_lock;
+
+#define INGEST_BATCH 8
+#define INGEST_QUEUE_LEN 64
+static QueueHandle_t s_ingest_q;
 
 static bool s_rtc_ok, s_sd_ok, s_radio_ok;
 
@@ -153,14 +159,18 @@ static cJSON *reading_to_json(const api_reading_t *r) {
     return o;
 }
 
-static esp_err_t status_get_handler(httpd_req_t *req) {
+static cJSON *status_json(void) {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddNumberToObject(o, "now_s", current_timestamp_s());
     cJSON_AddNumberToObject(o, "uptime_s", (double)(esp_timer_get_time() / 1000000));
     cJSON_AddBoolToObject(o, "rtc_ok", s_rtc_ok);
     cJSON_AddBoolToObject(o, "sd_ok", s_sd_ok);
     cJSON_AddBoolToObject(o, "radio_ok", s_radio_ok);
-    send_json(req, o);
+    return o;
+}
+
+static esp_err_t status_get_handler(httpd_req_t *req) {
+    send_json(req, status_json());
     return ESP_OK;
 }
 
@@ -219,6 +229,61 @@ void api_record_reading(const api_reading_t *r) {
     s_history_next[n] = (s_history_next[n] + 1) % HISTORY_LEN;
     if (s_history_count[n] < HISTORY_LEN) s_history_count[n]++;
     xSemaphoreGive(s_history_lock);
+    if (s_ingest_q && xQueueSend(s_ingest_q, r, 0) != pdTRUE) {  // full (offline): drop the oldest, keep the newest
+        api_reading_t old;
+        xQueueReceive(s_ingest_q, &old, 0);
+        xQueueSend(s_ingest_q, r, 0);
+    }
+}
+
+static esp_err_t ingest_post(const api_reading_t *r, int n) {
+    cJSON *root = cJSON_CreateObject(), *rows = cJSON_AddArrayToObject(root, "rows");
+    for (int i = 0; i < n; i++) cJSON_AddItemToArray(rows, reading_to_json(&r[i]));
+    cJSON_AddItemToObject(root, "status", status_json());
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) return ESP_ERR_NO_MEM;
+
+    esp_http_client_config_t cfg = {
+        .url = INGEST_URL, .method = HTTP_METHOD_POST, .timeout_ms = 10000,
+        .crt_bundle_attach = esp_crt_bundle_attach,  // verifies the server certificate against the built-in roots
+    };
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    esp_err_t e = h ? ESP_OK : ESP_ERR_NO_MEM;
+    int code = 0;
+    if (h) {
+        esp_http_client_set_header(h, "Content-Type", "application/json");
+        esp_http_client_set_header(h, "Authorization", "Bearer " INGEST_TOKEN);
+        esp_http_client_set_post_field(h, body, strlen(body));
+        e = esp_http_client_perform(h);
+        code = esp_http_client_get_status_code(h);
+        esp_http_client_cleanup(h);
+    }
+    free(body);
+    if (e == ESP_OK && code != 200) {
+        ESP_LOGW(TAG, "Ingest rejected: HTTP %d%s", code, code == 401 ? " (check INGEST_TOKEN)" : "");
+        return ESP_FAIL;
+    }
+    return e;
+}
+
+static void ingest_task(void *arg) {
+    api_reading_t batch[INGEST_BATCH];
+    int n = 0, backoff_s = 5;
+    for (;;) {
+        if (n == 0) {
+            xQueueReceive(s_ingest_q, &batch[n++], portMAX_DELAY);
+            vTaskDelay(pdMS_TO_TICKS(2000));  // let a burst from the slaves gather into one POST
+        }
+        while (n < INGEST_BATCH && xQueueReceive(s_ingest_q, &batch[n], 0) == pdTRUE) n++;
+        if (ingest_post(batch, n) == ESP_OK) {
+            n = 0;
+            backoff_s = 5;
+        } else {  // keep the batch and retry; rows arriving meanwhile wait in the queue
+            vTaskDelay(pdMS_TO_TICKS(backoff_s * 1000));
+            backoff_s = backoff_s >= 30 ? 60 : backoff_s * 2;
+        }
+    }
 }
 
 static esp_err_t start_httpd(void) {
@@ -252,6 +317,14 @@ esp_err_t api_start(void) {
         nvs_err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(nvs_err);
+
+    if (INGEST_URL[0]) {
+        s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
+        if (!s_ingest_q || xTaskCreate(ingest_task, "ingest", 8192, NULL, 4, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "Ingest push could not start");
+            s_ingest_q = NULL;
+        }
+    }
 
     // Doesn't wait for an IP; httpd below serves once the retry handler gets one.
     wifi_connect();
