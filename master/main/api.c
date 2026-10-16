@@ -16,6 +16,7 @@
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_sntp.h"
 
 #include "api.h"
 #include "node_config.h"
@@ -74,6 +75,12 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
         s_wifi_retry_s = 1;
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        // HTTPS cert validation needs a real clock; the RTC is never copied to the system time.
+        if (!sntp_enabled()) {
+            sntp_setoperatingmode(SNTP_OPMODE_POLL);
+            sntp_setservername(0, "pool.ntp.org");
+            sntp_init();
+        }
     }
 }
 
