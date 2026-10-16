@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
   # Public HTTPS without opening ports:  TUNNEL_TOKEN=<token> docker compose --profile tunnel up -d
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.10.0
     command: tunnel --no-autoupdate run
     environment:
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}

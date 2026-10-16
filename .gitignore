@@ -11,3 +11,4 @@ downloads/
 hub-data/
 pi-server/
 pi-server.tar.gz
+master/main/node_config.h

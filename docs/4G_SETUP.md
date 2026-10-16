@@ -11,7 +11,7 @@ The master joins the 4G pocket router's Wi-Fi and pushes readings to `https://ja
    INGEST_TOKEN=<48 random hex characters>
    ```
    Make one with `openssl rand -hex 24`. Then `docker compose --profile tunnel --profile hub up -d`.
-3. Edit `master/main/node_config.h` (never commit it):
+3. Edit `master/main/node_config.h` (gitignored; copy it from `node_config.h.example` on a fresh clone):
    ```
    #define WIFI_SSID     "<dongle Wi-Fi name>"
    #define WIFI_PASS     "<dongle Wi-Fi password>"
@@ -67,4 +67,4 @@ Free pins for later: 16, 17.
 - Run `cloudflared` on one machine only. Two machines with the same tunnel token share the traffic, so about half the pushes land on the wrong server. Stop the PC's stack before starting the Pi's: `docker compose --profile tunnel down`.
 - On the Pi, run `chmod 600 .env` and check `timedatectl` says the clock is synchronized.
 - The Pi stores data on its SD card with no backup. Copy `data/jaga.db` and `hub-data/hub.db` somewhere else regularly.
-- `master/main/node_config.h` is tracked by git and hidden from `git status` with skip-worktree, so a `git stash` or checkout can overwrite your real values. Re-check `INGEST_TOKEN` and `WIFI_*` after any pull.
+- `master/main/node_config.h` is now gitignored. Copy `node_config.h.example` to `node_config.h` on a fresh clone and fill it in.
