@@ -40,12 +40,12 @@ HW-736 BAT -> protected 18650 (or 1S protection board)
 SIM900A board GND -> IRFZ44N/IRLZ44N drain; source -> common GND
 GPIO16 -> 100 to 220 ohm -> gate; gate -> 100 k -> GND
 GPIO17 (ESP32 TX) -> SIM900A RXD
-GPIO21 (ESP32 RX) <- SIM900A TXD
+GPIO27 (ESP32 RX) <- SIM900A TXD (3VT)
 ```
 
 Rules:
 - The SIM900A draws up to 2 A in bursts while transmitting. Put a 1000 uF capacitor across its 5 V and GND, close to the board, not after the MOSFET. If the protection board cuts out, use a stronger cell.
-- Check the board's UART level. Most minis are 3.3 V/5 V tolerant on TXD/RXD; if yours outputs 5 V on TXD, divide it down before GPIO21.
+- Check the board's UART level. Most minis are 3.3 V/5 V tolerant on TXD/RXD; if yours outputs 5 V on TXD, divide it down before GPIO27.
 - The board must power up on its own when supplied (PWRKEY not needed). If it stays silent, bridge PWRKEY per the board's silkscreen.
 - Fit an antenna. The module will not register without one.
 - Add a Schottky diode (1N5819 or similar) in series with the panel + wire, stripe toward the LM2596 or HW-736. Do not use a HER208 here, it drops over 1 V.
@@ -68,7 +68,7 @@ Sensor pins on the master, from `master/main/main.c`:
 
 The nRF24 runs on 3.3 V only. A 5 V feed destroys it.
 
-Used by the modem: 16 (power gate), 17 (TX), 21 (RX). The RTC, SD card and LEDs are no longer fitted on the master.
+Used by the modem: 16 (power gate), 17 (TX), 27 (RX). The RTC, SD card and LEDs are no longer fitted on the master.
 
 ## 3. Before going live
 

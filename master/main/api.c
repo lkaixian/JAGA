@@ -35,7 +35,7 @@ static QueueHandle_t s_ingest_q;
 // The mini board powers up by itself when supplied (PWRKEY is not driven).
 #define MODEM_PWR_PIN    GPIO_NUM_16
 #define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> SIM900A RXD
-#define MODEM_RX_PIN     GPIO_NUM_21  // ESP32 RX <- SIM900A TXD
+#define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- SIM900A TXD
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
