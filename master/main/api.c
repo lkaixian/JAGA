@@ -38,6 +38,7 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_PWR_PIN    GPIO_NUM_16
 #define MODEM_TX_PIN     GPIO_NUM_27  // ESP32 TX -> SIM900A RXD
 #define MODEM_RX_PIN     GPIO_NUM_17  // ESP32 RX <- SIM900A TXD
+#define MODEM_USE_KEY    0            // 1: press the key if no AT answer. Off: this board boots by itself and the key toggles it OFF
 #define MODEM_KEY_PIN    GPIO_NUM_25  // -> board's D6 (power key): a ~1.5 s pulse toggles the module on/off
 #define MODEM_KEY_ACTIVE 1            // level that counts as pressed; flip to 0 if the pulse does nothing
 #define MODEM_KEY_MS     1500
@@ -153,7 +154,7 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
 
     bool done = false;
     modem_dce_t *dce = sim800_init(dte);
-    if (!dce) {  // the key toggles, so only press it once the module has failed to answer
+    if (!dce && MODEM_USE_KEY) {  // the key toggles, so only press it once the module has failed to answer
         ESP_LOGW(TAG, "Modem did not answer AT, pressing the power key");
         gpio_set_level(MODEM_KEY_PIN, MODEM_KEY_ACTIVE);
         vTaskDelay(pdMS_TO_TICKS(MODEM_KEY_MS));
