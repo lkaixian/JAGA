@@ -36,8 +36,8 @@ static QueueHandle_t s_ingest_q;
 // Put a 100k pulldown on the gate so the modem stays off while the ESP32 boots.
 // The mini board powers up by itself when supplied (PWRKEY is not driven).
 #define MODEM_PWR_PIN    GPIO_NUM_16
-#define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> SIM900A RXD
-#define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- SIM900A TXD
+#define MODEM_TX_PIN     GPIO_NUM_27  // ESP32 TX -> SIM900A RXD
+#define MODEM_RX_PIN     GPIO_NUM_17  // ESP32 RX <- SIM900A TXD
 #define MODEM_KEY_PIN    GPIO_NUM_25  // -> board's D6 (power key): a ~1.5 s pulse toggles the module on/off
 #define MODEM_KEY_ACTIVE 1            // level that counts as pressed; flip to 0 if the pulse does nothing
 #define MODEM_KEY_MS     1500
