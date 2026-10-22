@@ -36,6 +36,9 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_PWR_PIN    GPIO_NUM_16
 #define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> SIM900A RXD
 #define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- SIM900A TXD
+#define MODEM_KEY_PIN    GPIO_NUM_25  // -> board's D6 (power key): a ~1.5 s pulse toggles the module on/off
+#define MODEM_KEY_ACTIVE 1            // level that counts as pressed; flip to 0 if the pulse does nothing
+#define MODEM_KEY_MS     1500
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
 #define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
@@ -148,8 +151,16 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
 
     bool done = false;
     modem_dce_t *dce = sim800_init(dte);
+    if (!dce) {  // the key toggles, so only press it once the module has failed to answer
+        ESP_LOGW(TAG, "Modem did not answer AT, pressing the power key");
+        gpio_set_level(MODEM_KEY_PIN, MODEM_KEY_ACTIVE);
+        vTaskDelay(pdMS_TO_TICKS(MODEM_KEY_MS));
+        gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
+        vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
+        dce = sim800_init(dte);
+    }
     if (!dce) {
-        ESP_LOGW(TAG, "Modem did not answer AT (power, wiring, baud?)");
+        ESP_LOGW(TAG, "Modem still silent (power, wiring, baud?)");
         goto off;
     }
     dce->set_flow_ctrl(dce, MODEM_FLOW_CONTROL_NONE);
@@ -229,6 +240,9 @@ esp_err_t api_start(void) {
     gpio_reset_pin(MODEM_PWR_PIN);
     gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(MODEM_PWR_PIN, MODEM_ALWAYS_ON);
+    gpio_reset_pin(MODEM_KEY_PIN);
+    gpio_set_direction(MODEM_KEY_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
 
     if (!INGEST_URL[0]) return ESP_OK;  // nothing to push to
     s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
