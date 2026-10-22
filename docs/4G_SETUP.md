@@ -39,8 +39,8 @@ HW-736 BAT -> protected 18650 (or 1S protection board)
                                  -> SIM900A board 5V
 SIM900A board GND -> IRFZ44N/IRLZ44N drain; source -> common GND
 GPIO16 -> 100 to 220 ohm -> gate; gate -> 100 k -> GND
-GPIO27 (ESP32 TX) -> SIM900A RXD (3VR)
-GPIO17 (ESP32 RX) <- SIM900A TXD (3VT)
+GPIO17 (ESP32 TX) -> SIM900A board pin 3VT (labels are from the MCU side)
+GPIO27 (ESP32 RX) <- 1 kohm <- board pin 3VR (idles at 4 V, so keep the resistor)
 ```
 
 Rules:
@@ -68,7 +68,7 @@ Sensor pins on the master, from `master/main/main.c`:
 
 The nRF24 runs on 3.3 V only. A 5 V feed destroys it.
 
-Used by the modem: 16 (power gate), 27 (TX), 17 (RX), 25 (power key). The RTC, SD card and LEDs are no longer fitted on the master.
+Used by the modem: 16 (power gate), 17 (TX), 27 (RX), 25 (power key, unused). The RTC, SD card and LEDs are no longer fitted on the master.
 
 ## 3. Before going live
 
