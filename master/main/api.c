@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -43,6 +44,7 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_KEY_ACTIVE 1            // level that counts as pressed; flip to 0 if the pulse does nothing
 #define MODEM_KEY_MS     1500
 #define MODEM_SYNC_ROUNDS 20 // tries of 115200/19200/9600, about 12 s each
+#define MODEM_REG_TRIES  30           // CGREG polls, 3 s apart
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
 #define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
@@ -161,6 +163,25 @@ static void modem_wake(int baud) {
     uart_flush_input(UART_NUM_2);
 }
 
+// Log the reply lines of one AT command (used to see why a data call does not come up).
+static int s_reg_stat = -1;  // last "+CGREG: <n>,<stat>" seen
+
+static esp_err_t log_reply_line(modem_dce_t *dce, const char *line) {
+    if (strstr(line, "OK")) return esp_modem_process_command_done(dce, MODEM_STATE_SUCCESS);
+    if (strstr(line, "ERROR")) return esp_modem_process_command_done(dce, MODEM_STATE_FAIL);
+    const char *p = strstr(line, "+CGREG:");
+    if (p && (p = strchr(p, ','))) s_reg_stat = atoi(p + 1);
+    ESP_LOGI(TAG, "modem reply: %.*s", (int)strcspn(line, "\r\n"), line);
+    return ESP_OK;
+}
+
+static void modem_ask(modem_dte_t *dte, modem_dce_t *dce, const char *cmd, uint32_t timeout_ms) {
+    dce->handle_line = log_reply_line;
+    ESP_LOGI(TAG, "modem ask: %.*s", (int)strcspn(cmd, "\r"), cmd);
+    if (dte->send_cmd(dte, cmd, timeout_ms) != ESP_OK) ESP_LOGW(TAG, "modem ask: no answer");
+    dce->handle_line = esp_modem_dce_handle_response_default;
+}
+
 // One modem session: power up, dial PPP, push everything queued, hang up, power off.
 // Returns true if the queue was emptied. Rows that did not go stay in batch[0..*n) and the queue.
 static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *batch, int *n) {
@@ -206,6 +227,19 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
     if (dce->get_signal_quality(dce, &rssi, &ber) == ESP_OK) {
         ESP_LOGI(TAG, "Modem %s, operator '%s', rssi %u (0-31, 99 = none)", dce->name, dce->oper, (unsigned)rssi);
     }
+
+    // Dialing before the module has registered gives no CONNECT, so wait for it (1 home, 5 roaming).
+    s_reg_stat = -1;
+    for (int i = 0; i < MODEM_REG_TRIES && s_reg_stat != 1 && s_reg_stat != 5; i++) {
+        if (i) vTaskDelay(pdMS_TO_TICKS(3000));
+        modem_ask(dte, dce, "AT+CGREG?\r", 2000);
+    }
+    if (s_reg_stat != 1 && s_reg_stat != 5) {
+        ESP_LOGW(TAG, "Not registered on the network (CGREG %d): antenna, signal, SIM or no 2G coverage?", s_reg_stat);
+        dce->deinit(dce);
+        goto off;
+    }
+    modem_ask(dte, dce, "AT+CGATT=1\r", 30000);  // attach to GPRS before dialing
 
     esp_modem_apn = MODEM_APN;
     void *adapter = esp_modem_netif_setup(dte);

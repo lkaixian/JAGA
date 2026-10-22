@@ -178,8 +178,13 @@ static void esp_handle_uart_pattern(esp_modem_dte_t *esp_dte)
 static void esp_handle_uart_data(esp_modem_dte_t *esp_dte)
 {
     size_t length = 0;
+    modem_dce_t *dce = esp_dte->parent.dce;  // read once: the dce can be freed and cleared while this task runs
+    if (!dce) {
+        uart_flush(esp_dte->uart_port);
+        return;
+    }
     uart_get_buffered_data_len(esp_dte->uart_port, &length);
-    if (esp_dte->parent.dce->mode != MODEM_PPP_MODE && length) {
+    if (dce->mode != MODEM_PPP_MODE && length) {
         // Check if matches the pattern to process the data as pattern
         int pos = uart_pattern_get_pos(esp_dte->uart_port);
         if (pos > -1) {
@@ -196,7 +201,7 @@ static void esp_handle_uart_data(esp_modem_dte_t *esp_dte)
             // if pattern not found in the data,
             // continue reading as long as the modem is in MODEM_STATE_PROCESSING, checking for the pattern
             while (length < max && esp_dte->buffer[length-1] != '\n' &&
-                   esp_dte->parent.dce->state == MODEM_STATE_PROCESSING) {
+                   dce->state == MODEM_STATE_PROCESSING) {
                 bytes = uart_read_bytes(esp_dte->uart_port,
                                         esp_dte->buffer + length, 1, pdMS_TO_TICKS(100));
                 length += bytes;
