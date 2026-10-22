@@ -59,7 +59,7 @@ Sensor pins on the master, from `master/main/main.c`:
 
 | Part | ESP32 pins |
 |---|---|
-| nRF24 SCK / MISO / MOSI / CSN / CE | 18 / 19 / 23 / 22 / 5 |
+| nRF24 SCK / MISO / MOSI / CSN / CE | 19 / 21 / 23 / 22 / 18 |
 | SD card CS | 13 |
 | DHT22 data | 4 |
 | JSN-SR40T TX / RX | 14 / 26 |

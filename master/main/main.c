@@ -40,11 +40,11 @@ typedef struct __attribute__((packed)) {
 #define SONAR_RX_PIN    GPIO_NUM_26
 
 // nRF24 SPI Pin Definitions
-#define NRF_SCK         GPIO_NUM_18
-#define NRF_MISO        GPIO_NUM_19
+#define NRF_SCK         GPIO_NUM_19
+#define NRF_MISO        GPIO_NUM_21
 #define NRF_MOSI        GPIO_NUM_23
 #define NRF_CSN         GPIO_NUM_22
-#define NRF_CE          GPIO_NUM_5
+#define NRF_CE          GPIO_NUM_18
 
 // Own periodic self-measurement interval. The master never deep-sleeps (it
 // must stay awake to receive from the slave nodes), so this is a plain
