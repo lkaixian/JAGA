@@ -17,8 +17,10 @@
 #include "esp_crt_bundle.h"
 #include "esp_sntp.h"
 #include "driver/gpio.h"
+#include "driver/uart.h"
 #include "esp_modem.h"
 #include "esp_modem_netif.h"
+#include "esp_modem_dce_service.h"
 #include "sim800.h"  // the SIM900A speaks the same AT dialect
 
 #include "api.h"
@@ -158,6 +160,22 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
         gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
         vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
         dce = sim800_init(dte);
+    }
+    if (!dce) {  // some boards ship fixed at 9600: switch the module to 115200 and keep it there
+        ESP_LOGW(TAG, "Trying 9600 baud");
+        uart_set_baudrate(UART_NUM_2, 9600);
+        dce = sim800_init(dte);
+        if (dce) {
+            dce->handle_line = esp_modem_dce_handle_response_default;
+            dte->send_cmd(dte, "AT+IPR=115200\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
+            uart_set_baudrate(UART_NUM_2, 115200);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            dce->handle_line = esp_modem_dce_handle_response_default;
+            dte->send_cmd(dte, "AT&W\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
+            ESP_LOGI(TAG, "Module set to 115200 baud");
+        } else {
+            uart_set_baudrate(UART_NUM_2, 115200);
+        }
     }
     if (!dce) {
         ESP_LOGW(TAG, "Modem still silent (power, wiring, baud?)");
