@@ -128,6 +128,28 @@ body{
 .tile .sub{font-size:11.5px;color:var(--mist);margin-top:4px}
 .v.good{color:var(--signal)} .v.warn{color:var(--amber)} .v.bad{color:var(--siren)}
 
+/* ---------- clickable tiles and the temperature / humidity trend dialog ---------- */
+.tile.btn{cursor:pointer}
+.tile.btn:hover,.tile.btn:focus-visible{border-color:var(--signal);outline:none}
+.tile.btn .k::after{content:" \203A";color:var(--signal)}
+dialog.trend{
+  background:linear-gradient(180deg,var(--hull),var(--panel));color:var(--paper);
+  border:1px solid var(--rule);border-radius:6px;padding:16px;
+  width:min(920px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;
+}
+dialog.trend::backdrop{background:rgba(3,10,18,.7)}
+.trend .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:12px}
+.trend .bar h2{margin:0}
+.trend .seg{display:flex}
+.trend .seg button,.trend .close{
+  font-family:var(--font-mono);font-size:12px;padding:7px 12px;cursor:pointer;
+  background:rgba(6,23,38,.45);color:var(--mist);border:1px solid var(--rule);
+}
+.trend .seg button[aria-pressed=true]{color:var(--abyss);background:var(--signal);border-color:var(--signal)}
+.trend .seg button:focus-visible,.trend .close:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+.trend svg{width:100%;height:auto;display:block;touch-action:pan-y}
+.trend .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
+
 /* ---------- chart ---------- */
 .chart svg{width:100%;height:auto;display:block}
 .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:11.5px;color:var(--mist)}
@@ -160,7 +182,8 @@ td.num{font-family:var(--font-mono)}
 .chip.fault{border-style:dashed}
 .chip.nodata{opacity:.7}
 tr.stale{opacity:.5}
-.tiles.stale{opacity:.5}
+.tiles.stale .tile:not(.btn){opacity:.5}
+.tile.btn.stale{opacity:.5}
 .readout .note{font-size:11.5px;color:var(--mist);margin-top:6px}
 
 /* ---------- node map ---------- */
@@ -182,6 +205,7 @@ tr.stale{opacity:.5}
   .mark b{font-size:24px}
   table{font-size:12px}
   .hide-sm{display:none}
+  .trend .stats{grid-template-columns:repeat(2,1fr)}
 }
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
@@ -305,6 +329,16 @@ tr.stale{opacity:.5}
           <div class="v" id="seenV">0 <small>s ago</small></div>
           <div class="sub" id="seenSub">Uplink about every 60 s</div>
         </div>
+        <div class="tile btn" id="tile_temp" role="button" tabindex="0" aria-label="Temperature, open the trend">
+          <div class="k">Temperature</div>
+          <div class="v" id="v_temp">&mdash; <small>&deg;C</small></div>
+          <div class="sub" id="sub_temp">Click for trend</div>
+        </div>
+        <div class="tile btn" id="tile_hum" role="button" tabindex="0" aria-label="Humidity, open the trend">
+          <div class="k">Humidity</div>
+          <div class="v" id="v_hum">&mdash; <small>%</small></div>
+          <div class="sub" id="sub_hum">Click for trend</div>
+        </div>
       </div>
     </section>
   </div>
@@ -343,6 +377,8 @@ tr.stale{opacity:.5}
           <th class="hide-sm">Rain</th>
           <th class="hide-sm">Battery</th>
           <th class="hide-sm">Link</th>
+          <th class="hide-sm">Temp</th>
+          <th class="hide-sm">Humidity</th>
           <th>Status</th>
         </tr>
       </thead>
@@ -357,6 +393,29 @@ tr.stale{opacity:.5}
     <span>Map data &copy; OpenStreetMap contributors.</span>
   </footer>
 </div>
+
+<dialog class="trend" id="trend" aria-labelledby="trendTitle">
+  <div class="bar">
+    <h2 id="trendTitle"></h2>
+    <button class="close" id="trendClose" type="button">Close</button>
+  </div>
+  <div class="bar">
+    <div class="seg" id="metricSeg" role="group" aria-label="Measurement">
+      <button type="button" data-m="temp">Temperature</button>
+      <button type="button" data-m="hum">Humidity</button>
+    </div>
+    <div class="seg" id="rangeSeg" role="group" aria-label="Time range">
+      <button type="button" data-h="1">1 h</button>
+      <button type="button" data-h="6">6 h</button>
+      <button type="button" data-h="24">24 h</button>
+      <button type="button" data-h="0">All</button>
+    </div>
+  </div>
+  <svg id="trendChart" viewBox="0 0 900 320" role="img" aria-label="Trend chart"></svg>
+  <div class="stats" id="trendStats"></div>
+  <div class="hint" id="trendSpan"></div>
+  <div class="hint" id="trendNote" style="color:var(--amber)"></div>
+</dialog>
 
 <script>
 /* =========================================================================
@@ -466,6 +525,7 @@ async function fetchApi(){
   NODES.forEach((n, i) => {
     if(results[i].status === 'rejected') return;             // keep what is on screen for this node
     const rows = results[i].value;
+    env[n.id] = toEnv(rows);                                 // every row counts here, even when the sonar failed
     // newest raw row decides live / fault / no signal; older valid points still feed chart and rate
     meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s, srv: rows[0].received_at != null } : null;
     store[n.id] = rows.slice().reverse()
@@ -516,7 +576,9 @@ function simStep(){
       rain,
       batt: 4.02 - Math.min(0.55, simMin*0.0006) + (Math.random()-0.5)*0.01,
       rssi: Math.round(-96 - n.seed*4 + (Math.random()-0.5)*6),
-      snr:  +(8.5 - n.seed*1.1 + (Math.random()-0.5)*1.4).toFixed(1)
+      snr:  +(8.5 - n.seed*1.1 + (Math.random()-0.5)*1.4).toFixed(1),
+      temp: 28 - Math.min(6, rain*0.08) + Math.sin(simMin/40 + n.seed) + (Math.random()-0.5)*0.3,
+      hum:  Math.min(99, 68 + Math.min(25, rain*0.35) + Math.sin(simMin/55 + n.seed)*3 + (Math.random()-0.5)*1.2)
     });
     if(buf.length > 400) buf.shift();
   });
@@ -595,6 +657,153 @@ function fmtClock(){
   const d = new Date();
   return d.toTimeString().slice(0,8);
 }
+
+/* ---------- temperature and humidity ----------
+   Kept from every row, even when the sonar failed: the master's own node has a DHT22 but may have no sonar. */
+const METRIC = {
+  temp: { label:'Temperature', unit:'°C', dec:1, color:'#FF9F6B', min:-40, max:85 },
+  hum:  { label:'Humidity',    unit:'%',       dec:0, color:'#7FE0FF', min:0,   max:100 }
+};
+const env = {};                                      // id -> [{ts, temp, hum}] oldest first, ts = unix seconds
+NODES.forEach(n => env[n.id] = []);
+const inRange = (m, v) => Number.isFinite(v) && v >= METRIC[m].min && v <= METRIC[m].max;   // also drops the firmware's -999
+const toEnv = rows => rows.slice().reverse()
+  .map(r => ({ ts: r.received_at ?? r.log_timestamp_s,
+               temp: inRange('temp', r.temperature_c) ? r.temperature_c : null,
+               hum:  inRange('hum',  r.humidity_pct)  ? r.humidity_pct  : null }))
+  .filter(p => p.temp != null || p.hum != null);
+const envOf = id => SOURCE.mode === 'api' ? env[id]
+  : store[id].map(p => ({ ts: p.t * 60, temp: p.temp ?? null, hum: p.hum ?? null })).filter(p => p.temp != null || p.hum != null);
+const lastOf = (id, m) => { const v = envOf(id).filter(r => r[m] != null); return v[v.length-1]; };
+
+function drawEnv(n){
+  const st = nodeInfo(n).st;
+  for(const m in METRIC){
+    const M = METRIC[m], vals = envOf(n.id).filter(r => r[m] != null), last = vals[vals.length-1];
+    $('tile_'+m).classList.toggle('stale', st === 'nosignal' || st === 'nodata');
+    $('v_'+m).innerHTML = `${last ? last[m].toFixed(M.dec) : '&mdash;'} <small>${M.unit}</small>`;
+    const day = last ? vals.filter(r => r.ts >= last.ts - 86400).map(r => r[m]) : [];
+    $('sub_'+m).textContent = last
+      ? `${Math.min(...day).toFixed(M.dec)}–${Math.max(...day).toFixed(M.dec)} ${M.unit} over 24 h · click for trend`
+      : 'No reading yet · click for trend';
+  }
+}
+
+/* ---------- trend dialog: opened from the temperature or humidity tile ---------- */
+let trendMetric = 'temp', trendHours = 24, trendNodeId = null, trendRows = [], trendShown = null, trendTimer = null;
+const trendDlg = $('trend');
+
+function openTrend(m){
+  trendMetric = m; trendNodeId = activeId; trendShown = null;
+  trendDlg.showModal();
+  trendLoad();
+  clearInterval(trendTimer);
+  trendTimer = setInterval(trendLoad, 60000);
+}
+
+async function trendLoad(){
+  const id = trendNodeId;
+  if(trendShown !== id){ trendRows = envOf(id); trendShown = id; trendDraw(); }   // what the page holds already: draw at once
+  if(SOURCE.mode !== 'api') return;
+  try {
+    const rows = toEnv(await getHistory(`/api/history?node=${nodeNum(id)}&limit=5000`));
+    if(id === trendNodeId){ trendRows = rows; $('trendNote').textContent = ''; trendDraw(); }
+  } catch(e){
+    console.error(e);
+    $('trendNote').textContent = "Couldn't load the full history. Showing the latest readings only.";
+  }
+}
+
+const niceStep = x => { const p = 10 ** Math.floor(Math.log10(x)), f = x / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+const fmtT = (ts, long) => {
+  const d = new Date(ts * 1000), t = d.toTimeString().slice(0, 5);
+  return long ? `${d.getDate()}/${d.getMonth() + 1} ${t}` : t;
+};
+
+function trendDraw(){
+  const M = METRIC[trendMetric], n = NODES.find(x => x.id === trendNodeId), svg = $('trendChart');
+  $('trendTitle').textContent = `${n.name} · ${M.label}`;
+  document.querySelectorAll('#metricSeg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === trendMetric));
+  document.querySelectorAll('#rangeSeg button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.h === trendHours));
+  const all = trendRows.filter(r => r[trendMetric] != null);
+  const end = all.length ? all[all.length - 1].ts : 0;
+  const pts = (trendHours ? all.filter(r => r.ts >= end - trendHours * 3600) : all).map(r => ({ ts: r.ts, v: r[trendMetric] }));
+  if(pts.length < 2){
+    svg.innerHTML = '<text x="450" y="160" text-anchor="middle" fill="#7FA6C6" font-size="14">Not enough readings in this range yet</text>';
+    $('trendStats').innerHTML = ''; $('trendSpan').textContent = '';
+    return;
+  }
+  const vals = pts.map(p => p.v), mn = Math.min(...vals), mx = Math.max(...vals);
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const step = niceStep(Math.max(mx - mn, trendMetric === 'temp' ? 2 : 5) / 5);
+  const lo = Math.floor(mn / step) * step, hi = Math.max(Math.ceil(mx / step) * step, lo + step);
+  const W = 900, L = 54, R = 880, T = 22, B = 282;
+  const t0 = pts[0].ts, t1 = pts[pts.length - 1].ts;
+  const X = t => L + (t - t0) / (t1 - t0) * (R - L), Y = v => B - (v - lo) / (hi - lo) * (B - T);
+  const mono = 'font-family="IBM Plex Mono,monospace" font-size="10" fill="#7FA6C6"';
+
+  let s = '';
+  for(let v = lo; v <= hi + step / 1000; v += step){
+    s += `<line x1="${L}" y1="${Y(v)}" x2="${R}" y2="${Y(v)}" stroke="#1B4B72"/>`
+       + `<text x="${L - 9}" y="${Y(v) + 4}" text-anchor="end" ${mono}>${+v.toFixed(2)}</text>`;
+  }
+  const long = t1 - t0 > 36 * 3600;
+  for(let i = 0; i <= 5; i++){
+    const t = t0 + (t1 - t0) * i / 5, a = i === 0 ? 'start' : i === 5 ? 'end' : 'middle';
+    s += `<text x="${X(t)}" y="${B + 18}" text-anchor="${a}" ${mono}>${fmtT(t, long)}</text>`;
+  }
+  s += `<text x="${L}" y="${T - 8}" ${mono}>${M.label.toUpperCase()} (${M.unit})</text>`;
+
+  // thin to about 700 points, and break the line where the feed went quiet for 30 min
+  const k = Math.ceil(pts.length / 700), draw = [];
+  for(let i = 0; i < pts.length; i += k){
+    const b = pts.slice(i, i + k);
+    draw.push({ ts: b[b.length - 1].ts, v: b.reduce((a, p) => a + p.v, 0) / b.length });
+  }
+  let seg = [], segs = [seg];
+  draw.forEach((p, i) => { if(i && p.ts - draw[i - 1].ts > 1800){ seg = []; segs.push(seg); } seg.push(p); });
+  segs.forEach(g => {
+    s += g.length > 1
+      ? `<polyline points="${g.map(p => `${X(p.ts).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ')}" fill="none" stroke="${M.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+      : `<circle cx="${X(g[0].ts)}" cy="${Y(g[0].v)}" r="2" fill="${M.color}"/>`;
+  });
+  s += `<g id="hov" visibility="hidden"><line id="hovL" y1="${T}" y2="${B}" stroke="#E7F3FF" stroke-opacity=".45"/>`
+     + `<circle id="hovC" r="4.5" fill="#061726" stroke="${M.color}" stroke-width="2"/>`
+     + `<text id="hovT" font-family="IBM Plex Mono,monospace" font-size="12" fill="#E7F3FF"/></g>`
+     + `<rect id="hovR" x="${L}" y="${T}" width="${R - L}" height="${B - T}" fill="transparent"/>`;
+  svg.innerHTML = s;
+
+  const hov = svg.querySelector('#hov'), hovL = svg.querySelector('#hovL'), hovC = svg.querySelector('#hovC'), hovT = svg.querySelector('#hovT');
+  const rect = svg.querySelector('#hovR');
+  rect.addEventListener('pointermove', e => {
+    const r = svg.getBoundingClientRect(), t = t0 + ((e.clientX - r.left) / r.width * W - L) / (R - L) * (t1 - t0);
+    let best = pts[0];
+    for(const p of pts) if(Math.abs(p.ts - t) < Math.abs(best.ts - t)) best = p;
+    const cx = X(best.ts), cy = Y(best.v);
+    hovL.setAttribute('x1', cx); hovL.setAttribute('x2', cx);
+    hovC.setAttribute('cx', cx); hovC.setAttribute('cy', cy);
+    hovT.setAttribute('x', cx > 640 ? cx - 10 : cx + 10); hovT.setAttribute('y', Math.max(cy - 10, T + 12));
+    hovT.setAttribute('text-anchor', cx > 640 ? 'end' : 'start');
+    hovT.textContent = `${best.v.toFixed(M.dec)} ${M.unit} · ${fmtT(best.ts, true)}`;
+    hov.setAttribute('visibility', 'visible');
+  });
+  rect.addEventListener('pointerleave', () => hov.setAttribute('visibility', 'hidden'));
+
+  const cell = (k, v) => `<div class="tile"><div class="k">${k}</div><div class="v">${v.toFixed(M.dec)} <small>${M.unit}</small></div></div>`;
+  $('trendStats').innerHTML = cell('Latest', pts[pts.length - 1].v) + cell('Lowest', mn) + cell('Highest', mx) + cell('Average', avg);
+  $('trendSpan').textContent = `${pts.length} readings, ${fmtT(t0, true)} to ${fmtT(t1, true)}`;
+}
+
+['temp', 'hum'].forEach(m => {
+  const t = $('tile_' + m);
+  t.onclick = () => openTrend(m);
+  t.onkeydown = e => { if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); openTrend(m); } };
+});
+$('metricSeg').onclick = e => { const b = e.target.closest('button'); if(b){ trendMetric = b.dataset.m; trendDraw(); } };
+$('rangeSeg').onclick = e => { const b = e.target.closest('button'); if(b){ trendHours = +b.dataset.h; trendDraw(); } };
+$('trendClose').onclick = () => trendDlg.close();
+trendDlg.addEventListener('click', e => { if(e.target === trendDlg) trendDlg.close(); });   // click on the backdrop
+trendDlg.addEventListener('close', () => clearInterval(trendTimer));
 
 function yFromLevel(level){
   // drain graphic: floor y=206, rim y=34  → 1.20 m spans 172 px
@@ -693,6 +902,8 @@ function drawTable(){
         <td class="num hide-sm">${p?.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
         <td class="num hide-sm">${p?.batt == null ? '—' : p.batt.toFixed(2) + ' V'}</td>
         <td class="num hide-sm">${p?.rssi == null ? '—' : p.rssi + ' dBm'}</td>
+        <td class="num hide-sm">${lastOf(n.id, 'temp') ? lastOf(n.id, 'temp').temp.toFixed(1) + ' °C' : '—'}</td>
+        <td class="num hide-sm">${lastOf(n.id, 'hum') ? lastOf(n.id, 'hum').hum.toFixed(0) + ' %' : '—'}</td>
         <td><span class="chip ${cc}">${ct}</span>${lostSev ? ' <span class="chip stale">No signal</span>' : ''}</td>
       </tr>`;
   });
@@ -760,6 +971,7 @@ function render(){
   $('nodeName').textContent = n.name;
   $('nodeMeta').textContent = n.id + ' · ' + n.area;
   $('tiles').classList.toggle('stale', st !== 'live');
+  drawEnv(n);                    // before the early return below: a node with no sonar still has a DHT22
   $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? `${n.name}'s water sensor isn't reading. Check the sonar wiring.` : st === 'nodata' ? 'No data yet' : '';
   if(!p || st === 'fault'){      // never draw an old level as current
     ['waterLine','waterBody'].forEach(i => $(i).setAttribute('d', ''));
