@@ -10,13 +10,11 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "esp_pm.h"
 
 #include "dht22.h"
 #include "jsnsr40t.h"
 #include "nrf24.h"
-#include "ds1307.h"
-#include "sdcard.h"
-#include "ssd1306.h"
 #include "api.h"
 #include "node_config.h"
 
@@ -36,11 +34,6 @@ typedef struct __attribute__((packed)) {
 } telemetry_packet_t;
 
 #define SONAR_SAMPLE_COUNT 10
-// 8.3 name: FATFS_LFN_NONE (the ESP-IDF default) rejects longer filenames.
-#define TELEMETRY_CSV_PATH "/sdcard/telem.csv"
-#define TELEMETRY_CSV_HEADER \
-    "log_timestamp_s,node_id,sender_timestamp_s,temperature_c,humidity_pct,distance_mm,distance_stddev_mm,water_level_mm"
-
 // Sensor Pin Definitions (same physical layout as the slave nodes)
 #define DHT_GPIO        GPIO_NUM_4
 #define SONAR_TX_PIN    GPIO_NUM_14
@@ -53,69 +46,31 @@ typedef struct __attribute__((packed)) {
 #define NRF_CSN         GPIO_NUM_22
 #define NRF_CE          GPIO_NUM_5
 
-// microSD card shares the nRF24's SPI bus, own CS line
-#define SD_CS_PIN       GPIO_NUM_13
-
-// DS1307 RTC I2C Pin Definitions
-#define RTC_I2C_PORT    I2C_NUM_0
-#define RTC_SDA_PIN     GPIO_NUM_21
-#define RTC_SCL_PIN     GPIO_NUM_27
-
-// Status LEDs
-#define LED_BLUE        GPIO_NUM_32 // lit while this cycle's own scan is in progress
-#define LED_RED         GPIO_NUM_33 // lit when this cycle's own sensor read failed
-#define LED_GREEN       GPIO_NUM_25 // lit when this cycle's own data was logged successfully
-
 // Own periodic self-measurement interval. The master never deep-sleeps (it
 // must stay awake to receive from the slave nodes), so this is a plain
-// vTaskDelay between iterations of an infinite loop, not deep sleep.
-#define CYCLE_PERIOD_US (60LL * 1000000LL)
+// vTaskDelay between iterations of an infinite loop; the chip light-sleeps
+// in between (see the esp_pm_configure call in app_main). The SIM900A's
+// power and the push every ~10 min live in api.c.
+#define CYCLE_PERIOD_US (30LL * 1000000LL)
 
 // Both slave nodes transmit to this one shared address; distinguished by
 // the node_id field inside the packet, not by which pipe received it.
 static const uint8_t MASTER_ADDR[5] = {'M', 'A', 'S', 'T', '1'};
 
-static ds1307_t rtc;
-static bool rtc_available = false;
-static ssd1306_t oled;
-static bool oled_available = false;
-static bool sd_available = false;
 static bool radio_ok = false;
 
-// Latest known reading per node_id (1-3), kept across cycles so the OLED
-// still shows a slave's last report even on a cycle it didn't transmit.
+// Latest known reading per node_id (1-3), kept across cycles, so a slave that skipped a cycle keeps its last report
 static telemetry_packet_t last_reading[MAX_NODES + 1];
 static bool has_reading[MAX_NODES + 1];
-static uint8_t last_heard_id; // most recently received node, for the OLED
+static uint8_t last_heard_id;
 
 uint32_t current_timestamp_s(void) { // also used by api.c
-    if (rtc_available) {
-        struct tm t;
-        if (ds1307_get_time(&rtc, &t) == ESP_OK) {
-            return (uint32_t)mktime(&t);
-        }
-    }
-    // No RTC fitted (or it dropped out): fall back to seconds since this
-    // node's own boot - the master never deep-sleeps, so this stays
-    // monotonic for as long as it's been running.
-    return (uint32_t)(esp_timer_get_time() / 1000000);
+    time_t now = time(NULL);
+    if (now > 1600000000) return (uint32_t)now; // SNTP has set the clock (see api.c)
+    return (uint32_t)(esp_timer_get_time() / 1000000); // not synced yet: seconds since boot
 }
 
 static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p) {
-    char line[160];
-    snprintf(line, sizeof(line), "%u,%u,%u,%.2f,%.2f,%u,%u,%ld",
-             log_timestamp_s, p->node_id, p->timestamp_s,
-             p->temperature, p->humidity, p->distance_mm, p->distance_stddev_mm,
-             (long)p->water_level_mm);
-    if (sdcard_append_line(TELEMETRY_CSV_PATH, TELEMETRY_CSV_HEADER, line) != ESP_OK) {
-        ESP_LOGW(TAG, "Failed to log node %u's reading to SD card.", p->node_id);
-        if (sd_available) {
-            sdcard_deinit();
-            sd_available = false;
-            ESP_LOGW(TAG, "SD card removed or failing. Logging paused.");
-        }
-    }
-
     if (p->node_id >= 1 && p->node_id <= MAX_NODES) {
         last_heard_id = p->node_id;
         last_reading[p->node_id] = *p;
@@ -133,47 +88,6 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
         .water_level_mm = p->water_level_mm,
     });
 }
-
-// All values below are bounded in practice (node id 1-8, tenths-precision
-// temp/humidity, tank-scale water level) and the 21-char OLED line already
-// truncates anything longer - GCC's static worst-case estimate for %f/%d
-// doesn't know that, so silence the false positive rather than pad buffers.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wformat-truncation"
-static void update_oled(int received_this_cycle) {
-    if (!oled_available) return;
-
-    char line[24];
-    ssd1306_write_line(&oled, 0, "JAGA MASTER NODE");
-
-    int heard = 0;
-    for (int n = 1; n <= MAX_NODES; n++) heard += has_reading[n];
-    snprintf(line, sizeof(line), "NODES HEARD %d/%d", heard, MAX_NODES);
-    ssd1306_write_line(&oled, 1, line);
-
-    if (last_heard_id) {
-        const telemetry_packet_t *p = &last_reading[last_heard_id];
-        snprintf(line, sizeof(line), "LAST N%d W%ldMM", last_heard_id, (long)p->water_level_mm);
-        ssd1306_write_line(&oled, 2, line);
-        snprintf(line, sizeof(line), "T%.1fC H%.0f%%", p->temperature, p->humidity);
-    } else {
-        ssd1306_write_line(&oled, 2, "NO DATA YET");
-        line[0] = '\0';
-    }
-    ssd1306_write_line(&oled, 3, line);
-
-    snprintf(line, sizeof(line), "SD%s RTC%s",
-             sd_available ? "OK" : "FAIL", rtc_available ? "OK" : "NO");
-    ssd1306_write_line(&oled, 5, line);
-
-    if (radio_ok) snprintf(line, sizeof(line), "RX THIS CYCLE %d", received_this_cycle);
-    else snprintf(line, sizeof(line), "RADIO FAIL");
-    ssd1306_write_line(&oled, 6, line);
-
-    snprintf(line, sizeof(line), "UPTIME %luS", (unsigned long)(esp_timer_get_time() / 1000000));
-    ssd1306_write_line(&oled, 7, line);
-}
-#pragma GCC diagnostic pop
 
 // Pull every payload out of the nRF24's hardware FIFO, log it, return the count.
 static int drain_radio(nrf24_t *radio) {
@@ -217,14 +131,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing hardware subsystems...");
     ESP_LOGI(TAG, "Boot reason: %s", reset_reason_str(esp_reset_reason()));
 
-    gpio_reset_pin(LED_BLUE);
-    gpio_set_direction(LED_BLUE, GPIO_MODE_OUTPUT);
-    gpio_reset_pin(LED_RED);
-    gpio_set_direction(LED_RED, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_RED, 0);
-    gpio_reset_pin(LED_GREEN);
-    gpio_set_direction(LED_GREEN, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_GREEN, 0);
+    // Light sleep whenever every task is blocked. Clock is fixed at 160 MHz so the
+    // bit-banged DHT22 and UART timings don't move. Needs CONFIG_PM_ENABLE and
+    // CONFIG_FREERTOS_USE_TICKLESS_IDLE (sdkconfig.defaults).
+    esp_pm_config_esp32_t pm_cfg = { .max_freq_mhz = 160, .min_freq_mhz = 160, .light_sleep_enable = true };
+    if (esp_pm_configure(&pm_cfg) != ESP_OK) ESP_LOGW(TAG, "Light sleep not enabled (PM_ENABLE off in sdkconfig?).");
+    // The sonar UART cannot receive while asleep, so hold light sleep off while sampling.
+    esp_pm_lock_handle_t sample_lock = NULL;
+    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "sample", &sample_lock);
 
     // A failed init must not abort and reboot-loop: log it, skip that sensor
     // and report its sentinel instead.
@@ -232,22 +146,6 @@ void app_main(void) {
     if (!dht_ok) ESP_LOGW(TAG, "DHT22 init failed. Reporting -999 for temperature and humidity.");
     bool sonar_ok = (jsnsr40t_init(&sonar, SONAR_TX_PIN, SONAR_RX_PIN, SONAR_MAX_RANGE_MM) == ESP_OK);
     if (!sonar_ok) ESP_LOGW(TAG, "Sonar init failed. Reporting the water level sentinel.");
-
-    // Not fitted yet? ds1307_init fails cleanly (NACK/timeout) rather than
-    // aborting, and current_timestamp_s() just keeps the relative fallback.
-    // The I2C bus stays up either way, so the OLED below still works.
-    rtc_available = (ds1307_init(&rtc, RTC_I2C_PORT, RTC_SDA_PIN, RTC_SCL_PIN) == ESP_OK);
-    if (rtc_available) ds1307_set_if_unset(&rtc);
-#if OLED_ENABLED
-    oled_available = (ssd1306_init(&oled, RTC_I2C_PORT) == ESP_OK);
-#endif
-
-    // Park the SD card's CS high before touching the shared SPI bus. Until
-    // sdcard_init() runs the pin floats, and a selected card drives MISO and
-    // corrupts the nRF24's reads (CONFIG reads back 0xFF).
-    gpio_reset_pin(SD_CS_PIN);
-    gpio_set_direction(SD_CS_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(SD_CS_PIN, 1);
 
     radio_ok = (nrf24_init(&radio, SPI2_HOST, NRF_SCK, NRF_MOSI, NRF_MISO, NRF_CSN, NRF_CE) == ESP_OK);
     if (radio_ok) {
@@ -260,16 +158,11 @@ void app_main(void) {
         ESP_LOGW(TAG, "Radio init failed. Slave nodes cannot be received; own readings still logged.");
     }
 
-    // A missing/bad SD card shouldn't crash-loop the whole node - log a
-    // warning and keep running with SD logging disabled (status still shows
-    // on the OLED and in the serial log either way).
-    sd_available = (sdcard_init(SPI2_HOST, SD_CS_PIN) == ESP_OK);
-
-    // A missing/misconfigured Wi-Fi network shouldn't block booting either -
+    // A missing modem shouldn't block booting either -
     // same "degrade, don't crash-loop" treatment as the SD card and RTC above.
-    api_set_health(rtc_available, sd_available, radio_ok);
+    api_set_health(current_timestamp_s() > 1600000000, false, radio_ok);
     if (api_start() != ESP_OK) {
-        ESP_LOGW(TAG, "API failed to start - continuing with SD-only logging.");
+        ESP_LOGW(TAG, "API failed to start - continuing without push.");
     }
 
     // A hung main loop now reboots the master after 30 s (panic = true).
@@ -278,16 +171,14 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Master node ready (node_id=%u), listening + logging forever.", NODE_ID);
 
-    for (unsigned cycle = 1;; ) {
+    for (;;) {
         int64_t cycle_start = esp_timer_get_time();
         esp_task_wdt_reset();
-        api_set_health(rtc_available, sd_available, radio_ok);
+        api_set_health(current_timestamp_s() > 1600000000, false, radio_ok);
 
         telemetry_packet_t packet = {0};
         packet.node_id = NODE_ID;
-        bool had_error = false;
-
-        gpio_set_level(LED_BLUE, 1);
+        if (sample_lock) esp_pm_lock_acquire(sample_lock);
 
         // DHT22 requires a minimum of 2 seconds between reads
         vTaskDelay(pdMS_TO_TICKS(2000));
@@ -303,22 +194,17 @@ void app_main(void) {
             ESP_LOGW(TAG, "DHT22 read failed.");
             packet.temperature = -999.0f;
             packet.humidity = -999.0f;
-            had_error = true;
         }
 
         uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
         int valid_samples = 0;
         for (int i = 0; sonar_ok && i < SONAR_SAMPLE_COUNT; i++) {
-            gpio_set_level(LED_BLUE, 1); // pulse once per sampling attempt
             uint32_t d;
             bool sample_ok = (jsnsr40t_read(&sonar, &d, 300) == ESP_OK);
             if (sample_ok) {
                 sonar_samples[valid_samples++] = d;
-                gpio_set_level(LED_GREEN, 1); // pulse once per successful sample
             }
             vTaskDelay(pdMS_TO_TICKS(60)); // let any residual echo settle before retriggering
-            gpio_set_level(LED_BLUE, 0);
-            gpio_set_level(LED_GREEN, 0);
         }
 
         if (valid_samples == 0) {
@@ -326,7 +212,6 @@ void app_main(void) {
             packet.distance_mm = 0;
             packet.distance_stddev_mm = 0;
             packet.water_level_mm = INT32_MIN;
-            had_error = true;
         } else {
             uint32_t sum = 0;
             for (int i = 0; i < valid_samples; i++) sum += sonar_samples[i];
@@ -350,6 +235,7 @@ void app_main(void) {
             }
         }
 
+        if (sample_lock) esp_pm_lock_release(sample_lock);
         packet.timestamp_s = current_timestamp_s();
 
         ESP_LOGI(TAG, "Node %u (self) -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | t=%us",
@@ -358,40 +244,15 @@ void app_main(void) {
 
         log_telemetry(packet.timestamp_s, &packet);
 
-        gpio_set_level(LED_BLUE, 0);
-        gpio_set_level(LED_RED, had_error ? 1 : 0);
-        gpio_set_level(LED_GREEN, had_error ? 0 : 1);
 
         // Drain anything the slave nodes sent while we were busy above - the
         // nRF24 buffers up to 3 payloads in hardware on its own as long as
         // CE stays high, no CPU involvement needed until we poll it here.
         int received = radio_ok ? drain_radio(&radio) : 0;
 
-        // Remount only right after a drain, so the shared SPI2 bus is idle and
-        // the FIFO is empty; ~10 min between tries as the card init takes seconds.
-        if (!sd_available && cycle % 10 == 0) {
-            gpio_reset_pin(SD_CS_PIN);
-            gpio_set_direction(SD_CS_PIN, GPIO_MODE_OUTPUT);
-            gpio_set_level(SD_CS_PIN, 1);
-            if (sdcard_init(SPI2_HOST, SD_CS_PIN) == ESP_OK) {
-                sd_available = true;
-                ESP_LOGI(TAG, "SD card is back. Logging resumed.");
-            }
-            esp_task_wdt_reset(); // card init retries can take several seconds
-        }
-        cycle++;
 
-        update_oled(received);
-
-        // Hold the status LEDs for 5s, then turn them off.
-        // The OLED stays on the whole time for now (no blanking).
-        vTaskDelay(pdMS_TO_TICKS(5000));
-        esp_task_wdt_reset();
-        gpio_set_level(LED_RED, 0);
-        gpio_set_level(LED_GREEN, 0);
-
-        // Stay awake (no light sleep) so the HTTP API keeps answering; Wi-Fi's
-        // default min-modem-sleep handles power. Drain the nRF24 FIFO every 1s
+        
+        // Drain the nRF24 FIFO every 1s
         // so a slave packet shows up within ~1s of arriving (no IRQ pin
         // wired, so this polls).
         while (esp_timer_get_time() - cycle_start < CYCLE_PERIOD_US) {
@@ -399,7 +260,6 @@ void app_main(void) {
 
             esp_task_wdt_reset();
             if (radio_ok) received += drain_radio(&radio);
-            update_oled(received); // also keeps the UPTIME line ticking
-        }
+                    }
     }
 }

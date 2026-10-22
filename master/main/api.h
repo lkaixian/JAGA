@@ -28,14 +28,9 @@ typedef struct {
 uint32_t current_timestamp_s(void);
 
 /**
- * @brief Start Wi-Fi (WIFI_SSID/WIFI_PASS in node_config.h), mDNS as
- *        "jaga-master.local", and the HTTP JSON API on port 80:
- *          GET /api/status                    - now_s, uptime_s, rtc_ok, sd_ok, radio_ok
- *          GET /api/nodes                     - static per-node id/name/lat/lng
- *          GET /api/latest                    - each node's most recent reading
- *          GET /api/history?node=1-8&limit=N  - that node's recent readings, newest first
- *        Does not wait for Wi-Fi: the retry handler keeps reconnecting and
- *        httpd serves as soon as an IP arrives (logged as "Got IP"). Call once
+ * @brief Start the push task: every few minutes it powers the SIM900A, dials PPP
+ *        (MODEM_APN in node_config.h), POSTs the queued readings to INGEST_URL and
+ *        powers the modem off again. Does nothing if INGEST_URL is empty. Call once
  *        from app_main after hardware init.
  */
 esp_err_t api_start(void);
@@ -44,10 +39,9 @@ esp_err_t api_start(void);
 void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok);
 
 /**
- * @brief Record one reading (this node's own, or one drained from a slave)
- *        into the API's in-RAM ring buffer, so /api/latest and /api/history
- *        serve it without re-reading the SD card. Safe to call even if
- *        api_start() never ran or failed - it's just a no-op then.
+ * @brief Queue one reading (this node's own, or one drained from a slave) for
+ *        the next push. Safe to call even if api_start() never ran or failed -
+ *        it's just a no-op then.
  */
 void api_record_reading(const api_reading_t *r);
 

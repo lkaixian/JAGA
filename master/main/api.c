@@ -1,156 +1,71 @@
 #include <string.h>
-#include <stdlib.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h"
+#include "freertos/queue.h"
+#include "freertos/event_groups.h"
 
-#include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_netif.h"
-#include "esp_http_server.h"
+#include "esp_netif_ppp.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "nvs_flash.h"
-#include "mdns.h"
+#include "esp_pm.h"
 #include "cJSON.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_sntp.h"
+#include "driver/gpio.h"
+#include "esp_modem.h"
+#include "esp_modem_netif.h"
+#include "sim800.h"  // the SIM900A speaks the same AT dialect
 
 #include "api.h"
 #include "node_config.h"
 
 static const char *TAG = "API";
 
-#define HISTORY_LEN             90 // matches the dashboard's own rolling window
-
-// Static per-node metadata for /api/nodes - the only place node coordinates
-// live. TODO: replace with real surveyed GPS fixes.
-typedef struct {
-    uint8_t     node_id;
-    const char *name;
-    float       lat;
-    float       lng;
-} node_meta_t;
-
-static const node_meta_t NODE_META[] = {
-    { 1, "Slave 1 (Upstream)",  1.8710f, 103.0790f },
-    { 2, "Slave 2 (Midstream)", 1.8656f, 103.0850f },
-    { 3, "Master (Downstream)", 1.8620f, 103.0900f },
-    { 4, "Node 4",              1.8584f, 103.0950f },
-    { 5, "Node 5",              1.8548f, 103.1000f },
-};
-#define NODE_META_COUNT (sizeof(NODE_META) / sizeof(NODE_META[0]))
-
-// Per-node circular buffer of recent readings, indexed 1..MAX_NODES (slot 0
-// unused - mirrors main.c's last_reading/has_reading convention).
-static api_reading_t s_history[MAX_NODES + 1][HISTORY_LEN];
-static int s_history_count[MAX_NODES + 1] = {0};
-static int s_history_next[MAX_NODES + 1]  = {0}; // next slot this node will write
-static SemaphoreHandle_t s_history_lock;
-
-#define INGEST_BATCH 8
-#define INGEST_QUEUE_LEN 64
+#define INGEST_BATCH 20
+#define INGEST_QUEUE_LEN 128  // 10 min of own (30 s) and slave readings fits several times over
 static QueueHandle_t s_ingest_q;
+
+// Gates the SIM900A's power (logic-level N-MOSFET on its ground, high = on).
+// Put a 100k pulldown on the gate so the modem stays off while the ESP32 boots.
+// The mini board powers up by itself when supplied (PWRKEY is not driven).
+#define MODEM_PWR_PIN    GPIO_NUM_16
+#define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> SIM900A RXD
+#define MODEM_RX_PIN     GPIO_NUM_21  // ESP32 RX <- SIM900A TXD
+#define MODEM_BOOT_MS    8000         // power-up to first AT
+#define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
+#define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
+#define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
+
+#define BIT_GOT_IP  BIT0
+#define BIT_STOPPED BIT1
+static EventGroupHandle_t s_ev;
+static uint32_t s_push_fails;
+static esp_pm_lock_handle_t s_awake;  // no light sleep while the modem is up: UART and PPP need the CPU
 
 static bool s_rtc_ok, s_sd_ok, s_radio_ok;
 
-static esp_timer_handle_t s_wifi_timer, s_httpd_timer;
-static int s_wifi_retry_s = 1; // next reconnect delay; 1, 2, 4, 8, 16, 30 s
-static esp_err_t start_httpd(void);
-
-static void wifi_retry_cb(void *arg) { esp_wifi_connect(); }
-static void httpd_retry_cb(void *arg) { start_httpd(); }
-
-static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data) {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
-    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        // ponytail: doubling delay capped at 30 s via a one-shot timer, so the
-        // event loop never blocks; no jitter, fine for a single station.
-        esp_timer_start_once(s_wifi_timer, (uint64_t)s_wifi_retry_s * 1000000);
-        s_wifi_retry_s = s_wifi_retry_s >= 16 ? 30 : s_wifi_retry_s * 2;
-    } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-        s_wifi_retry_s = 1;
+static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    if (id == IP_EVENT_PPP_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));
-        // HTTPS cert validation needs a real clock; the RTC is never copied to the system time.
-        if (!sntp_enabled()) {
-            sntp_setoperatingmode(SNTP_OPMODE_POLL);
-            sntp_setservername(0, "pool.ntp.org");
-            sntp_init();
-        }
+        ESP_LOGI(TAG, "PPP up, IP " IPSTR, IP2STR(&event->ip_info.ip));
+        // HTTPS cert validation needs a real clock; resync every session, the modem is off in between.
+        if (sntp_enabled()) sntp_stop();
+        sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        sntp_setservername(0, "pool.ntp.org");
+        sntp_init();
+        xEventGroupSetBits(s_ev, BIT_GOT_IP);
+    } else if (id == IP_EVENT_PPP_LOST_IP) {
+        xEventGroupClearBits(s_ev, BIT_GOT_IP);
     }
 }
 
-static esp_err_t wifi_connect(void) {
-    const esp_timer_create_args_t wt = { .callback = wifi_retry_cb, .name = "wifi_retry" };
-    ESP_ERROR_CHECK(esp_timer_create(&wt, &s_wifi_timer));
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-
-    ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &wifi_event_handler, NULL));
-
-    wifi_config_t wifi_config = {0};
-    strlcpy((char *)wifi_config.sta.ssid, WIFI_SSID, sizeof(wifi_config.sta.ssid));
-    strlcpy((char *)wifi_config.sta.password, WIFI_PASS, sizeof(wifi_config.sta.password));
-
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    return ESP_OK;
-}
-
-static void set_cors(httpd_req_t *req) {
-    // The browser dashboard and the Flutter app both fetch this cross-origin.
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-}
-
-static void send_error(httpd_req_t *req, const char *status, const char *body) {
-    set_cors(req);
-    httpd_resp_set_status(req, status);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, body);
-}
-
-static void send_oom(httpd_req_t *req) {
-    send_error(req, "500 Internal Server Error",
-               "{\"error\":{\"code\":\"internal\",\"message\":\"The master ran out of memory.\"}}");
-}
-
-static void send_json(httpd_req_t *req, cJSON *root) {
-    char *out = root ? cJSON_PrintUnformatted(root) : NULL;
-    if (!out) {
-        send_oom(req);
-        cJSON_Delete(root);
-        return;
-    }
-    set_cors(req);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_sendstr(req, out);
-    free(out);
-    cJSON_Delete(root);
-}
-
-static esp_err_t nodes_get_handler(httpd_req_t *req) {
-    cJSON *arr = cJSON_CreateArray();
-    for (size_t i = 0; i < NODE_META_COUNT; i++) {
-        cJSON *o = cJSON_CreateObject();
-        cJSON_AddNumberToObject(o, "node_id", NODE_META[i].node_id);
-        cJSON_AddStringToObject(o, "name", NODE_META[i].name);
-        cJSON_AddNumberToObject(o, "lat", NODE_META[i].lat);
-        cJSON_AddNumberToObject(o, "lng", NODE_META[i].lng);
-        cJSON_AddItemToArray(arr, o);
-    }
-    send_json(req, arr);
-    return ESP_OK;
+static void on_modem_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
+    if (id == ESP_MODEM_EVENT_PPP_STOP) xEventGroupSetBits(s_ev, BIT_STOPPED);
 }
 
 static cJSON *reading_to_json(const api_reading_t *r) {
@@ -173,53 +88,8 @@ static cJSON *status_json(void) {
     cJSON_AddBoolToObject(o, "rtc_ok", s_rtc_ok);
     cJSON_AddBoolToObject(o, "sd_ok", s_sd_ok);
     cJSON_AddBoolToObject(o, "radio_ok", s_radio_ok);
+    cJSON_AddNumberToObject(o, "push_fails", s_push_fails);
     return o;
-}
-
-static esp_err_t status_get_handler(httpd_req_t *req) {
-    send_json(req, status_json());
-    return ESP_OK;
-}
-
-static esp_err_t latest_get_handler(httpd_req_t *req) {
-    cJSON *arr = cJSON_CreateArray();
-    xSemaphoreTake(s_history_lock, portMAX_DELAY);
-    for (int n = 1; n <= MAX_NODES; n++) {
-        if (s_history_count[n] == 0) continue;
-        int last_idx = (s_history_next[n] - 1 + HISTORY_LEN) % HISTORY_LEN;
-        cJSON_AddItemToArray(arr, reading_to_json(&s_history[n][last_idx]));
-    }
-    xSemaphoreGive(s_history_lock);
-    send_json(req, arr);
-    return ESP_OK;
-}
-
-static esp_err_t history_get_handler(httpd_req_t *req) {
-    int node_id = 0, limit = HISTORY_LEN;
-    char query[64], val[16];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
-        if (httpd_query_key_value(query, "node", val, sizeof(val)) == ESP_OK) node_id = atoi(val);
-        if (httpd_query_key_value(query, "limit", val, sizeof(val)) == ESP_OK) limit = atoi(val);
-    }
-    if (node_id < 1 || node_id > MAX_NODES) {
-        send_error(req, "400 Bad Request",
-                   "{\"error\":{\"code\":\"bad_request\",\"message\":\"node must be 1 to 8\"}}");
-        return ESP_OK;
-    }
-    if (limit <= 0 || limit > HISTORY_LEN) limit = HISTORY_LEN;
-
-    cJSON *arr = cJSON_CreateArray();
-    xSemaphoreTake(s_history_lock, portMAX_DELAY);
-    int available = s_history_count[node_id];
-    int n = available < limit ? available : limit;
-    for (int i = 0; i < n; i++) {
-        // newest first
-        int idx = (s_history_next[node_id] - 1 - i + HISTORY_LEN * 2) % HISTORY_LEN;
-        cJSON_AddItemToArray(arr, reading_to_json(&s_history[node_id][idx]));
-    }
-    xSemaphoreGive(s_history_lock);
-    send_json(req, arr);
-    return ESP_OK;
 }
 
 void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok) {
@@ -229,14 +99,8 @@ void api_set_health(bool rtc_ok, bool sd_ok, bool radio_ok) {
 }
 
 void api_record_reading(const api_reading_t *r) {
-    if (!s_history_lock || r->node_id < 1 || r->node_id > MAX_NODES) return;
-    xSemaphoreTake(s_history_lock, portMAX_DELAY);
-    int n = r->node_id;
-    s_history[n][s_history_next[n]] = *r;
-    s_history_next[n] = (s_history_next[n] + 1) % HISTORY_LEN;
-    if (s_history_count[n] < HISTORY_LEN) s_history_count[n]++;
-    xSemaphoreGive(s_history_lock);
-    if (s_ingest_q && xQueueSend(s_ingest_q, r, 0) != pdTRUE) {  // full (offline): drop the oldest, keep the newest
+    if (!s_ingest_q || r->node_id < 1 || r->node_id > MAX_NODES) return;
+    if (xQueueSend(s_ingest_q, r, 0) != pdTRUE) {  // full (offline): drop the oldest, keep the newest
         api_reading_t old;
         xQueueReceive(s_ingest_q, &old, 0);
         xQueueSend(s_ingest_q, r, 0);
@@ -252,7 +116,7 @@ static esp_err_t ingest_post(const api_reading_t *r, int n) {
     if (!body) return ESP_ERR_NO_MEM;
 
     esp_http_client_config_t cfg = {
-        .url = INGEST_URL, .method = HTTP_METHOD_POST, .timeout_ms = 10000,
+        .url = INGEST_URL, .method = HTTP_METHOD_POST, .timeout_ms = 30000,  // GPRS: slow TLS handshake
         .crt_bundle_attach = esp_crt_bundle_attach,  // verifies the server certificate against the built-in roots
     };
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
@@ -274,78 +138,110 @@ static esp_err_t ingest_post(const api_reading_t *r, int n) {
     return e;
 }
 
-static void ingest_task(void *arg) {
-    api_reading_t batch[INGEST_BATCH];
-    int n = 0, backoff_s = 5;
-    for (;;) {
-        if (n == 0) {
-            xQueueReceive(s_ingest_q, &batch[n++], portMAX_DELAY);
-            vTaskDelay(pdMS_TO_TICKS(2000));  // let a burst from the slaves gather into one POST
-        }
-        while (n < INGEST_BATCH && xQueueReceive(s_ingest_q, &batch[n], 0) == pdTRUE) n++;
-        if (ingest_post(batch, n) == ESP_OK) {
-            n = 0;
-            backoff_s = 5;
-        } else {  // keep the batch and retry; rows arriving meanwhile wait in the queue
-            vTaskDelay(pdMS_TO_TICKS(backoff_s * 1000));
-            backoff_s = backoff_s >= 30 ? 60 : backoff_s * 2;
-        }
+// One modem session: power up, dial PPP, push everything queued, hang up, power off.
+// Returns true if the queue was emptied. Rows that did not go stay in batch[0..*n) and the queue.
+static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *batch, int *n) {
+    gpio_set_level(MODEM_PWR_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
+    xEventGroupClearBits(s_ev, BIT_GOT_IP | BIT_STOPPED);
+
+    bool done = false;
+    modem_dce_t *dce = sim800_init(dte);
+    if (!dce) {
+        ESP_LOGW(TAG, "Modem did not answer AT (power, wiring, baud?)");
+        goto off;
     }
+    dce->set_flow_ctrl(dce, MODEM_FLOW_CONTROL_NONE);
+    dce->store_profile(dce);
+    uint32_t rssi = 0, ber = 0;
+    if (dce->get_signal_quality(dce, &rssi, &ber) == ESP_OK) {
+        ESP_LOGI(TAG, "Modem %s, operator '%s', rssi %u (0-31, 99 = none)", dce->name, dce->oper, (unsigned)rssi);
+    }
+
+    esp_modem_apn = MODEM_APN;
+    void *adapter = esp_modem_netif_setup(dte);
+    esp_modem_netif_set_default_handlers(adapter, netif);
+    esp_netif_attach(netif, adapter);  // dials PPP
+
+    if (xEventGroupWaitBits(s_ev, BIT_GOT_IP, pdFALSE, pdTRUE, pdMS_TO_TICKS(60000)) & BIT_GOT_IP) {
+        int64_t give_up = esp_timer_get_time() + PUSH_GIVE_UP_S * 1000000LL;
+        while (!done && esp_timer_get_time() < give_up) {
+            if (time(NULL) < TIME_VALID_S) { vTaskDelay(pdMS_TO_TICKS(1000)); continue; }  // waiting for SNTP
+            while (*n < INGEST_BATCH && xQueueReceive(s_ingest_q, &batch[*n], 0) == pdTRUE) (*n)++;
+            if (*n == 0) done = true;
+            else if (ingest_post(batch, *n) == ESP_OK) *n = 0;
+            else vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    } else {
+        ESP_LOGW(TAG, "No PPP link (SIM, APN, signal, or no 2G coverage?)");
+    }
+
+    if (esp_modem_stop_ppp(dte) == ESP_OK) xEventGroupWaitBits(s_ev, BIT_STOPPED, pdTRUE, pdTRUE, pdMS_TO_TICKS(5000));
+    esp_modem_netif_clear_default_handlers(adapter);
+    esp_modem_netif_teardown(adapter);
+    dce->deinit(dce);
+off:
+    gpio_set_level(MODEM_PWR_PIN, 0);
+    return done;
 }
 
-static esp_err_t start_httpd(void) {
-    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    httpd_handle_t server = NULL;
-    if (httpd_start(&server, &config) != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start HTTP server. Retrying in 30 s.");
-        esp_timer_start_once(s_httpd_timer, 30 * 1000000ULL);
-        return ESP_FAIL;
+// Loop: modem off for PUSH_OFF_S, then one session. If nothing got through, count one failure
+// and carry on; the rows stay queued for the next round.
+static void ingest_task(void *arg) {
+    api_reading_t batch[INGEST_BATCH];
+    int n = 0;  // rows held between sessions
+
+    esp_modem_dte_config_t cfg = ESP_MODEM_DTE_DEFAULT_CONFIG();
+    cfg.port_num = UART_NUM_2;
+    cfg.tx_io_num = MODEM_TX_PIN;
+    cfg.rx_io_num = MODEM_RX_PIN;
+    cfg.rts_io_num = UART_PIN_NO_CHANGE;  // no flow control wired
+    cfg.cts_io_num = UART_PIN_NO_CHANGE;
+    cfg.rx_buffer_size = 4096;
+    cfg.tx_buffer_size = 1024;
+    cfg.line_buffer_size = 2048;
+    cfg.event_task_stack_size = 4096;
+    modem_dte_t *dte = esp_modem_dte_init(&cfg);
+    esp_netif_config_t ncfg = ESP_NETIF_DEFAULT_PPP();
+    esp_netif_t *netif = esp_netif_new(&ncfg);
+    if (!dte || !netif) {
+        ESP_LOGE(TAG, "Modem could not start");
+        vTaskDelete(NULL);
     }
+    esp_modem_set_event_handler(dte, on_modem_event, ESP_EVENT_ANY_ID, NULL);
 
-    static const httpd_uri_t status_uri  = { .uri = "/api/status",  .method = HTTP_GET, .handler = status_get_handler };
-    static const httpd_uri_t nodes_uri   = { .uri = "/api/nodes",   .method = HTTP_GET, .handler = nodes_get_handler };
-    static const httpd_uri_t latest_uri  = { .uri = "/api/latest",  .method = HTTP_GET, .handler = latest_get_handler };
-    static const httpd_uri_t history_uri = { .uri = "/api/history", .method = HTTP_GET, .handler = history_get_handler };
-    httpd_register_uri_handler(server, &status_uri);
-    httpd_register_uri_handler(server, &nodes_uri);
-    httpd_register_uri_handler(server, &latest_uri);
-    httpd_register_uri_handler(server, &history_uri);
-
-    ESP_LOGI(TAG, "API up: GET /api/status, /api/nodes, /api/latest, /api/history?node=<1-8>&limit=<n>");
-    return ESP_OK;
+    for (;;) {
+        esp_pm_lock_acquire(s_awake);
+        bool done = push_session(netif, dte, batch, &n);
+        esp_pm_lock_release(s_awake);
+        if (done) {
+            ESP_LOGI(TAG, "Push done, modem off for %d s (fails so far: %u)", PUSH_OFF_S, (unsigned)s_push_fails);
+        } else {
+            s_push_fails++;
+            ESP_LOGW(TAG, "No push, modem off for %d s (fails so far: %u)", PUSH_OFF_S, (unsigned)s_push_fails);
+        }
+        vTaskDelay(pdMS_TO_TICKS(PUSH_OFF_S * 1000));
+    }
 }
 
 esp_err_t api_start(void) {
-    s_history_lock = xSemaphoreCreateMutex();
+    gpio_reset_pin(MODEM_PWR_PIN);
+    gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(MODEM_PWR_PIN, 0);
 
-    esp_err_t nvs_err = nvs_flash_init();
-    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        nvs_err = nvs_flash_init();
+    if (!INGEST_URL[0]) return ESP_OK;  // nothing to push to
+    s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
+    s_ev = xEventGroupCreate();
+    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "modem", &s_awake);
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, on_ip_event, NULL));
+
+    if (xTaskCreate(ingest_task, "ingest", 8192, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Ingest push could not start");
+        vQueueDelete(s_ingest_q);
+        s_ingest_q = NULL;
+        return ESP_FAIL;
     }
-    ESP_ERROR_CHECK(nvs_err);
-
-    if (INGEST_URL[0]) {
-        s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
-        if (!s_ingest_q || xTaskCreate(ingest_task, "ingest", 8192, NULL, 4, NULL) != pdPASS) {
-            ESP_LOGE(TAG, "Ingest push could not start");
-            s_ingest_q = NULL;
-        }
-    }
-
-    // Doesn't wait for an IP; httpd below serves once the retry handler gets one.
-    wifi_connect();
-
-    if (mdns_init() == ESP_OK) {
-        mdns_hostname_set("jaga-master");
-        mdns_instance_name_set("JAGA Master Node");
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-        ESP_LOGI(TAG, "mDNS up - reachable at http://jaga-master.local/");
-    } else {
-        ESP_LOGW(TAG, "mDNS init failed - use the IP address logged above instead.");
-    }
-
-    const esp_timer_create_args_t ht = { .callback = httpd_retry_cb, .name = "httpd_retry" };
-    ESP_ERROR_CHECK(esp_timer_create(&ht, &s_httpd_timer));
-    return start_httpd();
+    return ESP_OK;
 }

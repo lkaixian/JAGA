@@ -17,18 +17,13 @@
 // height is known to be shorter than that.
 #define SONAR_MAX_RANGE_MM      JSNSR40T_DEFAULT_MAX_RANGE_MM
 
-// The OLED is a demo/debug aid. Set to 0 for real deployment - skips the
-// I2C probe and all display writes, saving its draw on battery/solar power.
-#define OLED_ENABLED 1
 
-// Wi-Fi the master joins to serve /api/* (see api.c) to the dashboard and
-// the Flutter app. TODO: point this at the real deployment network.
-#define WIFI_SSID  "CHANGE_ME"
-#define WIFI_PASS  "CHANGE_ME"
+// Carrier APN for the SIM in the SIM900A (Maxis "net", CelcomDigi "internet", U Mobile "unet").
+#define MODEM_APN  "internet"
 
-// Push readings to a server on another network (the server can't poll this master).
+// Push readings over the SIM900A (GPRS) to the server.
 // POSTs {"rows":[...],"status":{...}} to INGEST_URL with "Authorization: Bearer INGEST_TOKEN".
-// Leave INGEST_URL empty to only serve /api/* for a server on the same Wi-Fi.
+// Leave INGEST_URL empty to disable the modem entirely.
 // The token must equal INGEST_TOKEN in the server's .env. Do not commit the real one.
 #define INGEST_URL    ""   // e.g. "https://jaga.larmkx.com/api/ingest"
 #define INGEST_TOKEN  "CHANGE_ME"
