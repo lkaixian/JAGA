@@ -19,6 +19,12 @@ assert c.post("/api/ingest", json={"rows": "x"}, headers=ok).status_code == 400
 assert c.post("/api/ingest", json={"rows": [row, {"node_id": 1}], "status": st}, headers=ok).json() == {"ok": True}
 assert c.post("/api/ingest", json={"rows": [row]}, headers=ok).status_code == 200  # duplicate: stored once
 assert len(c.get("/api/history?node=1").json()) == 1 and A.rejected == 1
+burst = [{**row, "node_id": 2, "log_timestamp_s": t, "sender_timestamp_s": t, "temperature_c": 20 + i}
+         for i, t in enumerate((1000, 1030, 1060))]  # three samples 30 s apart, pushed together
+assert c.post("/api/ingest", json={"rows": burst}, headers=ok).status_code == 200
+got = sorted(c.get("/api/history?node=2").json(), key=lambda r: r["log_timestamp_s"])
+gaps = [round(b["received_at"] - a["received_at"]) for a, b in zip(got, got[1:])]
+assert gaps == [30, 30], gaps  # dated by their own spacing, not all by the arrival time
 s = c.get("/api/status").json()
 assert s["master_ok"] is True and s["rtc_ok"] is True
 print("ingest ok")

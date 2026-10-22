@@ -373,6 +373,16 @@ def ingest(body: dict, authorization: str = Header("")):
     rows, st = body.get("rows"), body.get("status")
     if not isinstance(rows, list):
         return err(400, "bad_request", "rows must be a list.")
+    # The master queues samples (30 s apart) and pushes them together, so date each row by how far it is behind
+    # the newest row of its node in this batch, on the master's own clock. Without this a whole batch shares one
+    # arrival time and every trend (water rate, temperature, humidity) piles up at one instant.
+    newest_log = {}
+    for r in rows:
+        if valid(r):
+            newest_log[r["node_id"]] = max(newest_log.get(r["node_id"], 0), r["log_timestamp_s"])
+    for r in rows:
+        if valid(r):
+            r["_age"] = max(0, min(newest_log[r["node_id"]] - r["log_timestamp_s"], 86400))
     try:
         store(rows)
     except sqlite3.Error:
