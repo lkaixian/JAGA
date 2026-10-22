@@ -37,6 +37,7 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> SIM900A RXD
 #define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- SIM900A TXD
 #define MODEM_BOOT_MS    8000         // power-up to first AT
+#define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
 #define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
 #define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
@@ -142,7 +143,7 @@ static esp_err_t ingest_post(const api_reading_t *r, int n) {
 // Returns true if the queue was emptied. Rows that did not go stay in batch[0..*n) and the queue.
 static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *batch, int *n) {
     gpio_set_level(MODEM_PWR_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
+    vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));  // also covers boot of a module that was powered at startup
     xEventGroupClearBits(s_ev, BIT_GOT_IP | BIT_STOPPED);
 
     bool done = false;
@@ -181,7 +182,7 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
     esp_modem_netif_teardown(adapter);
     dce->deinit(dce);
 off:
-    gpio_set_level(MODEM_PWR_PIN, 0);
+    if (!MODEM_ALWAYS_ON) gpio_set_level(MODEM_PWR_PIN, 0);
     return done;
 }
 
@@ -227,7 +228,7 @@ static void ingest_task(void *arg) {
 esp_err_t api_start(void) {
     gpio_reset_pin(MODEM_PWR_PIN);
     gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(MODEM_PWR_PIN, 0);
+    gpio_set_level(MODEM_PWR_PIN, MODEM_ALWAYS_ON);
 
     if (!INGEST_URL[0]) return ESP_OK;  // nothing to push to
     s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
