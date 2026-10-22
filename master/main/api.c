@@ -36,17 +36,20 @@ static QueueHandle_t s_ingest_q;
 // Put a 100k pulldown on the gate so the modem stays off while the ESP32 boots.
 // The mini board powers up by itself when supplied (PWRKEY is not driven).
 #define MODEM_PWR_PIN    GPIO_NUM_16
-#define MODEM_TX_PIN     GPIO_NUM_27  // ESP32 TX -> SIM900A RXD
-#define MODEM_RX_PIN     GPIO_NUM_17  // ESP32 RX <- SIM900A TXD
+#define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> board pin 3VT (labels are from the MCU side)
+#define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- board pin 3VR, idles at 4 V: keep a 1k in series
 #define MODEM_USE_KEY    0            // 1: press the key if no AT answer. Off: this board boots by itself and the key toggles it OFF
 #define MODEM_KEY_PIN    GPIO_NUM_25  // -> board's D6 (power key): a ~1.5 s pulse toggles the module on/off
 #define MODEM_KEY_ACTIVE 1            // level that counts as pressed; flip to 0 if the pulse does nothing
 #define MODEM_KEY_MS     1500
+#define MODEM_SYNC_ROUNDS 20 // tries of 115200/19200/9600, about 12 s each
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
 #define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
 #define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
+
+#define MODEM_AT_TEST    0  // 1: only send AT at several baud rates and print what comes back; no pushing
 
 #define BIT_GOT_IP  BIT0
 #define BIT_STOPPED BIT1
@@ -145,6 +148,19 @@ static esp_err_t ingest_post(const api_reading_t *r, int n) {
     return e;
 }
 
+// The SIM900A locks its auto-baud on the first few "AT"s, so send a burst before the driver's single sync.
+static void modem_wake(int baud) {
+    uart_set_baudrate(UART_NUM_2, baud);
+    uint8_t buf[64];
+    for (int i = 0; i < 5; i++) {
+        uart_write_bytes(UART_NUM_2, "AT\r", 3);
+        int n = uart_read_bytes(UART_NUM_2, buf, sizeof(buf), pdMS_TO_TICKS(200));
+        if (n > 0) ESP_LOG_BUFFER_HEXDUMP(TAG, buf, n, ESP_LOG_INFO);
+        else ESP_LOGW(TAG, "baud %d: no reply", baud);
+    }
+    uart_flush_input(UART_NUM_2);
+}
+
 // One modem session: power up, dial PPP, push everything queued, hang up, power off.
 // Returns true if the queue was emptied. Rows that did not go stay in batch[0..*n) and the queue.
 static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *batch, int *n) {
@@ -153,31 +169,33 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
     xEventGroupClearBits(s_ev, BIT_GOT_IP | BIT_STOPPED);
 
     bool done = false;
-    modem_dce_t *dce = sim800_init(dte);
-    if (!dce && MODEM_USE_KEY) {  // the key toggles, so only press it once the module has failed to answer
-        ESP_LOGW(TAG, "Modem did not answer AT, pressing the power key");
-        gpio_set_level(MODEM_KEY_PIN, MODEM_KEY_ACTIVE);
-        vTaskDelay(pdMS_TO_TICKS(MODEM_KEY_MS));
-        gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
-        vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
-        dce = sim800_init(dte);
-    }
-    if (!dce) {  // some boards ship fixed at 9600: switch the module to 115200 and keep it there
-        ESP_LOGW(TAG, "Trying 9600 baud");
-        uart_set_baudrate(UART_NUM_2, 9600);
-        dce = sim800_init(dte);
-        if (dce) {
-            dce->handle_line = esp_modem_dce_handle_response_default;
-            dte->send_cmd(dte, "AT+IPR=115200\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
-            uart_set_baudrate(UART_NUM_2, 115200);
-            vTaskDelay(pdMS_TO_TICKS(500));
-            dce->handle_line = esp_modem_dce_handle_response_default;
-            dte->send_cmd(dte, "AT&W\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
-            ESP_LOGI(TAG, "Module set to 115200 baud");
-        } else {
-            uart_set_baudrate(UART_NUM_2, 115200);
+    // The module may still be booting (or resetting on a weak supply), so keep trying for a while.
+    static const int try_bauds[] = {115200, 19200, 9600};  // boards ship at 115200, 19200 or 9600
+    modem_dce_t *dce = NULL;
+    for (int round = 0; !dce && round < MODEM_SYNC_ROUNDS; round++) {
+        for (int i = 0; !dce && i < 3; i++) {
+            modem_wake(try_bauds[i]);
+            dce = sim800_init(dte);
+            if (dce && try_bauds[i] != 115200) {  // switch the module to 115200 and keep it there
+                dce->handle_line = esp_modem_dce_handle_response_default;
+                dte->send_cmd(dte, "AT+IPR=115200\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
+                uart_set_baudrate(UART_NUM_2, 115200);
+                vTaskDelay(pdMS_TO_TICKS(500));
+                dce->handle_line = esp_modem_dce_handle_response_default;
+                dte->send_cmd(dte, "AT&W\r", MODEM_COMMAND_TIMEOUT_DEFAULT);
+                ESP_LOGI(TAG, "Module set to 115200 baud");
+            }
         }
+        if (!dce && round == 0 && MODEM_USE_KEY) {  // the key toggles, so only press it once the module has failed to answer
+            ESP_LOGW(TAG, "Modem did not answer AT, pressing the power key");
+            gpio_set_level(MODEM_KEY_PIN, MODEM_KEY_ACTIVE);
+            vTaskDelay(pdMS_TO_TICKS(MODEM_KEY_MS));
+            gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
+            vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));
+        }
+        if (!dce) vTaskDelay(pdMS_TO_TICKS(3000));
     }
+    uart_set_baudrate(UART_NUM_2, 115200);
     if (!dce) {
         ESP_LOGW(TAG, "Modem still silent (power, wiring, baud?)");
         goto off;
@@ -255,6 +273,45 @@ static void ingest_task(void *arg) {
     }
 }
 
+#if MODEM_AT_TEST
+static void at_test_task(void *arg) {
+    static const int bauds[] = {115200, 9600, 57600, 19200, 38400};
+    esp_pm_lock_handle_t awake;
+    esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "attest", &awake);
+    esp_pm_lock_acquire(awake);
+    uint8_t buf[128];
+    uart_config_t c = { .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE,
+                        .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+                        .source_clk = UART_SCLK_APB };
+    c.baud_rate = 115200;
+    uart_param_config(UART_NUM_2, &c);
+    uart_set_pin(UART_NUM_2, MODEM_TX_PIN, MODEM_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_2, 1024, 0, 0, NULL, 0);
+    for (int round = 0;; round++) {
+        // alternate the pin order, in case the wires are swapped
+        int tx = (round & 1) ? MODEM_RX_PIN : MODEM_TX_PIN;
+        int rx = (round & 1) ? MODEM_TX_PIN : MODEM_RX_PIN;
+        uart_set_pin(UART_NUM_2, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        ESP_LOGI(TAG, "AT test: TX on GPIO%d, RX on GPIO%d, RX idles %s", tx, rx,
+                 gpio_get_level(rx) ? "HIGH" : "LOW");
+        for (int i = 0; i < 5; i++) {
+            uart_set_baudrate(UART_NUM_2, bauds[i]);
+            for (int t = 0; t < 3; t++) {
+                uart_flush_input(UART_NUM_2);
+                uart_write_bytes(UART_NUM_2, "AT\r\n", 4);
+                int n = uart_read_bytes(UART_NUM_2, buf, sizeof(buf) - 1, pdMS_TO_TICKS(700));
+                if (n > 0) {
+                    ESP_LOGI(TAG, "baud %d: %d bytes:", bauds[i], n);
+                    ESP_LOG_BUFFER_HEXDUMP(TAG, buf, n, ESP_LOG_INFO);
+                } else {
+                    ESP_LOGW(TAG, "baud %d: nothing", bauds[i]);
+                }
+            }
+        }
+    }
+}
+#endif
+
 esp_err_t api_start(void) {
     gpio_reset_pin(MODEM_PWR_PIN);
     gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
@@ -263,6 +320,10 @@ esp_err_t api_start(void) {
     gpio_set_direction(MODEM_KEY_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
 
+#if MODEM_AT_TEST
+    xTaskCreate(at_test_task, "attest", 4096, NULL, 4, NULL);
+    return ESP_OK;
+#endif
     if (!INGEST_URL[0]) return ESP_OK;  // nothing to push to
     s_ingest_q = xQueueCreate(INGEST_QUEUE_LEN, sizeof(api_reading_t));
     s_ev = xEventGroupCreate();
