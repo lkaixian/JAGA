@@ -24,7 +24,7 @@ from trend import analyze
 MASTER = os.environ.get("MASTER_URL", "http://jaga-master.local").rstrip("/")  # use the IP in Docker: no mDNS
 # Set MASTER_URL empty and INGEST_TOKEN to let a master on another network POST its readings to /api/ingest instead.
 INGEST_TOKEN = os.environ.get("INGEST_TOKEN", "")
-INGEST_STALE_S = 120  # no POST for this long = master unreachable
+INGEST_STALE_S = 1500  # no POST for this long = master unreachable
 DB = os.environ.get("DB_PATH", "/data/jaga.db")
 POLL_S = 10
 RETAIN_DAYS = 180  # readings older than this are deleted, once a day
