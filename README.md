@@ -36,7 +36,7 @@ unit - **edit these before flashing a new node**:
 | `NODE_ID` | Unique per physical node (1-8; the master stores up to 8 nodes, currently slaves 1 and 2, master is 3) |
 | `SONAR_MOUNT_HEIGHT_MM` / `SONAR_MOUNT_ANGLE_DEG` | This node's sensor mount geometry, used to convert raw distance into water level |
 | `SONAR_MAX_RANGE_MM` | Sanity ceiling for sonar readings (defaults to the sensor's own spec range) |
-| `WIFI_SSID` / `WIFI_PASS` (master only) | Wi-Fi the master joins to serve the HTTP API |
+| `MODEM_APN` / `INGEST_URL` / `INGEST_TOKEN` (master only) | Carrier APN for the SIM900A, and where the master pushes readings (see `docs/4G_SETUP.md`) |
 | `OLED_ENABLED` (master only) | Set to `0` for real deployment - skips the I2C probe and all display writes to save power |
 
 A second slave node is just a copy of the root project with `NODE_ID` set to `2`.
@@ -61,9 +61,9 @@ Blue pulses per sonar sampling attempt, green pulses on each successful
 sample and lights solid on a fully successful cycle, red pulses for 5s on
 any read/log/TX error that cycle.
 
-## HTTP API (master)
+## HTTP API (master, removed)
 
-The master joins Wi-Fi and serves JSON on port 80 at `http://jaga-master.local`
+The master no longer has Wi-Fi: it pushes readings through a SIM900A modem to `/api/ingest` on the server (`docs/4G_SETUP.md`). The section below describes the old Wi-Fi API and no longer applies. The master used to join Wi-Fi and serve JSON on port 80 at `http://jaga-master.local`
 (or the IP it logs as "Got IP" on the serial console; Android often can't
 resolve `.local`). CORS is open. The API comes up whenever Wi-Fi does, without a reboot.
 

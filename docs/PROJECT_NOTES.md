@@ -11,7 +11,7 @@ Ultrasonic water-level sensors in campus drains send readings by nRF24 radio to 
 | Folder | What |
 |---|---|
 | `/` (root) | Slave node firmware (ESP-IDF 4.3.6). Samples DHT22 + JSN-SR40T, sends over nRF24, deep sleeps. Unsent packets queue in RTC memory. |
-| `master/` | Master node firmware. Same sensors, receives slaves (ids 1 to 8), logs to SD, serves `/api/*` over Wi-Fi. |
+| `master/` | Master node firmware. Same sensors, receives slaves (ids 1 to 8), pushes readings to the server through a SIM900A modem (no Wi-Fi, no `/api/*`). |
 | `server/` | One site's Python service (FastAPI + SQLite). Polls the master, serves the API, optionally pushes to the hub. |
 | `hub/` | Central service. Sites push to it; it serves each under `/server/<slug>` and builds `/servers.json`. |
 | `dashboard/` | Static pages: `index.html` (home), `dashboard.html` (server picker), `site.html` (one site's live dashboard), `classic.html` (older), `servers.json` (fallback list), logos, `river.js`. |
@@ -45,7 +45,7 @@ Android APK: `cd app && flutter build apk --release --target-platform android-ar
 
 ## Not done or not verified
 
-- The master node has never been connected to the server, so no real readings have flowed. Flash `master/` with real `WIFI_SSID`/`WIFI_PASS` in `master/main/node_config.h` (currently `CHANGE_ME`) and set `MASTER_URL` to its IP.
+- The master node has never been connected to the server, so no real readings have flowed. Flash `master/` with the real `MODEM_APN` and `INGEST_*` values in `master/main/node_config.h` (currently `CHANGE_ME`) and set `MASTER_URL` to its IP.
 - Firmware compiles (both projects, no warnings) but has not been flashed. Hardware tests still to do: sensor unplugged, SD card pulled, two slaves powered on together, OLED text fit.
 - Sonar: the drain graphic assumes the sensor is 1.45 m above the floor, so set `SONAR_MOUNT_HEIGHT_MM` to 1450. The sensor cannot read closer than about 25 cm, so mount it with the danger level at least 30 cm below it.
 - The app has been run on a phone only by the owner, informally. Not covered: notifications, the 8-line chart, dark map tiles.

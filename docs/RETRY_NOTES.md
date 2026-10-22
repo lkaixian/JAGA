@@ -11,13 +11,13 @@
 4. Register the site on the Pi hub and put the printed token in `.env` as `SITE_TOKEN`, with `HUB_URL=http://nginx:80`, `SITE_SLUG=uthm-batu-pahat`:
    `docker compose --profile hub --profile tunnel exec hub python admin.py add uthm-batu-pahat --name "UTHM Parit Raja" --lat 1.8650 --lng 103.0860 --logo /uthm.png`
    then `docker compose --profile hub --profile tunnel up -d`.
-5. Firmware: in `master/main/node_config.h` set `WIFI_SSID`, `WIFI_PASS`, `INGEST_URL "https://jaga.larmkx.com/api/ingest"`, `INGEST_TOKEN` (same as the Pi). Never commit them. Build and flash (see memory `firmware-build-recipe`).
+5. Firmware: in `master/main/node_config.h` set `MODEM_APN`, `INGEST_URL "https://jaga.larmkx.com/api/ingest"`, `INGEST_TOKEN` (same as the Pi). Never commit them. Build and flash (see memory `firmware-build-recipe`).
 6. Check: ESP32 serial log shows "Got IP" and no "Ingest rejected"; `curl https://jaga.larmkx.com/api/latest` shows a reading; `/api/status` says `master_ok: true`.
 
 ## If it fails
 - `Ingest rejected: HTTP 401`: token differs between firmware and Pi `.env`.
 - HTTP 403 or no POST arrives: nginx config not reloaded (`docker compose restart nginx`).
-- TLS error: board clock or Wi-Fi not up yet; it retries on its own (5 s, doubling to 60 s).
+- TLS error: board clock or modem link not up yet; it retries on its own (5 s between tries, a new modem session every 8 min).
 - Dashboard says master unreachable: no POST for 120 s.
 
 ## Repack after changes
