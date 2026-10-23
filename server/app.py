@@ -31,6 +31,7 @@ RETAIN_DAYS = 180  # readings older than this are deleted, once a day
 API_VERSION = 1  # bump on a breaking change so old apps can say so
 COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "humidity_pct",
         "distance_mm", "distance_stddev_mm", "water_level_mm")
+OPT = ("battery_v", "link_retries", "rssi_dbm")  # optional: battery volts, nRF24 retries (slaves), SIM dBm (master)
 
 def read_config():
     try:
@@ -82,6 +83,10 @@ def init_db():
             id INTEGER PRIMARY KEY, received_at REAL NOT NULL, log_timestamp_s INT, node_id INT,
             sender_timestamp_s INT, temperature_c REAL, humidity_pct REAL, distance_mm INT,
             distance_stddev_mm INT, water_level_mm INT)""")
+        have = [r[1] for r in c.execute("PRAGMA table_info(readings)")]
+        for k, t in zip(OPT, ("REAL", "INT", "INT")):
+            if k not in have:
+                c.execute(f"ALTER TABLE readings ADD COLUMN {k} {t}")
         c.execute("CREATE TABLE IF NOT EXISTS node_pos (node_id INTEGER PRIMARY KEY, lat REAL NOT NULL, lng REAL NOT NULL)")
         c.execute("CREATE INDEX IF NOT EXISTS readings_node ON readings (node_id, id)")
 
@@ -99,7 +104,8 @@ def valid(r):
                         and (abs(v) < 2**63 if isinstance(v, int) else math.isfinite(v)))
     return (num(r["node_id"], int) and r["node_id"] >= 1
             and all(num(r[k], int) for k in COLS if k.endswith(("_s", "_mm")))
-            and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct")))
+            and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct"))
+            and all(r.get(k) is None or num(r[k], (int, float)) for k in OPT))
 
 
 def dup(c, r):
@@ -144,8 +150,8 @@ def store(rows):
         for r in good:
             if dup(c, r):
                 continue
-            c.execute(f"INSERT INTO readings (received_at, {','.join(COLS)}) VALUES (?{',?' * len(COLS)})",
-                      (time.time() - r.get("_age", 0), *[r[k] for k in COLS]))
+            c.execute(f"INSERT INTO readings (received_at, {','.join(COLS + OPT)}) VALUES (?{',?' * (len(COLS + OPT))})",
+                      (time.time() - r.get("_age", 0), *[r[k] for k in COLS], *[r.get(k) for k in OPT]))
 
 
 def poll_once():
@@ -234,7 +240,7 @@ def push_rows(latest):
     if not (cur and cur[0] >= latest and (push["latest"] is None or latest >= push["latest"])):
         cur = (latest, 2**62)
     push["latest"] = latest
-    cols = ("received_at",) + COLS
+    cols = ("received_at",) + COLS + OPT
     for _ in range(MAX_BATCHES):
         with closing(db()) as c:
             rows = c.execute(f"SELECT id, {','.join(cols)} FROM readings WHERE (received_at, id) > (?, ?) "
@@ -336,7 +342,7 @@ def newest(node, limit):
 
 
 def as_reading(row):
-    return {**{k: row[k] for k in COLS}, "received_at": row["received_at"]}  # server clock, unix seconds
+    return {**{k: row[k] for k in COLS + OPT}, "received_at": row["received_at"]}  # server clock, unix seconds
 
 
 def node_ids():

@@ -28,6 +28,7 @@ MAX_BODY = 1_000_000
 MAX_ROWS = 500
 COLS = ("log_timestamp_s", "node_id", "sender_timestamp_s", "temperature_c", "humidity_pct",
         "distance_mm", "distance_stddev_mm", "water_level_mm")
+OPT = ("battery_v", "link_retries", "rssi_dbm")  # same as server/app.py
 last_prune = 0.0
 
 
@@ -60,6 +61,10 @@ def init_schema(c):
     # config_json lives here, not in SCHEMA (admin.py), so an existing database gets it too
     if "config_json" not in [r[1] for r in c.execute("PRAGMA table_info(sites)")]:
         c.execute("ALTER TABLE sites ADD COLUMN config_json TEXT")
+    have = [r[1] for r in c.execute("PRAGMA table_info(readings)")]
+    for k, t in zip(OPT, ("REAL", "INT", "INT")):
+        if k not in have:
+            c.execute(f"ALTER TABLE readings ADD COLUMN {k} {t}")
 
 
 @asynccontextmanager
@@ -199,7 +204,8 @@ def valid(r, now):
             and num(r["received_at"], (int, float)) and 0 < r["received_at"] <= now + 86400
             and num(r["node_id"], int) and r["node_id"] >= 1
             and all(num(r[k], int) for k in COLS if k.endswith(("_s", "_mm")))
-            and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct")))
+            and all(num(r[k], (int, float)) for k in ("temperature_c", "humidity_pct"))
+            and all(r.get(k) is None or num(r[k], (int, float)) for k in OPT))
 
 
 @app.post("/hub/v1/sites/{slug}/readings")
@@ -227,8 +233,9 @@ def save_readings(slug, rows):
             c.execute("DELETE FROM readings WHERE received_at < ?", (now - RETAIN_DAYS * 86400,))
             last_prune = now
         for r in good:  # the UNIQUE key makes a retried batch store nothing new
-            stored += c.execute(f"INSERT OR IGNORE INTO readings (slug, received_at, {','.join(COLS)}) "
-                                f"VALUES (?,?{',?' * len(COLS)})", (slug, r["received_at"], *[r[k] for k in COLS])).rowcount
+            stored += c.execute(f"INSERT OR IGNORE INTO readings (slug, received_at, {','.join(COLS + OPT)}) "
+                                f"VALUES (?,?{',?' * len(COLS + OPT)})",
+                                (slug, r["received_at"], *[r[k] for k in COLS], *[r.get(k) for k in OPT])).rowcount
         c.execute("UPDATE sites SET last_seen=? WHERE slug=?", (now, slug))
         return {"stored": stored, "rejected": len(rows) - len(good), "latest_received_at": newest_received(c, slug)}
 
@@ -248,7 +255,7 @@ def approved(slug):
 
 
 def as_reading(r):
-    return {**{k: r[k] for k in COLS}, "received_at": r["received_at"]}
+    return {**{k: r[k] for k in COLS + OPT}, "received_at": r["received_at"]}
 
 
 def newest(slug, node, limit):

@@ -58,7 +58,7 @@ try:
     def row(node, at, level=500, **kw):
         return {"received_at": at, "node_id": node, "log_timestamp_s": int(at), "sender_timestamp_s": 1,
                 "temperature_c": 30.5, "humidity_pct": 70, "distance_mm": 1000, "distance_stddev_mm": 2,
-                "water_level_mm": level, **kw}
+                "water_level_mm": level, **kw}  # kw may carry battery_v, link_retries, rssi_dbm
 
     with TestClient(hub.app) as cl:
         # nothing reported yet

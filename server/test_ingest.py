@@ -25,6 +25,11 @@ assert c.post("/api/ingest", json={"rows": burst}, headers=ok).status_code == 20
 got = sorted(c.get("/api/history?node=2").json(), key=lambda r: r["log_timestamp_s"])
 gaps = [round(b["received_at"] - a["received_at"]) for a, b in zip(got, got[1:])]
 assert gaps == [30, 30], gaps  # dated by their own spacing, not all by the arrival time
+full = {**row, "node_id": 4, "battery_v": 3.9, "link_retries": 2, "rssi_dbm": -83}
+assert c.post("/api/ingest", json={"rows": [full]}, headers=ok).status_code == 200
+g = c.get("/api/history?node=4").json()[0]
+assert (g["battery_v"], g["link_retries"], g["rssi_dbm"]) == (3.9, 2, -83), g
+assert c.get("/api/history?node=1").json()[0]["battery_v"] is None  # old firmware: no field
 s = c.get("/api/status").json()
 assert s["master_ok"] is True and s["rtc_ok"] is True
 print("ingest ok")
