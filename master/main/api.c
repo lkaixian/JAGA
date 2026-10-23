@@ -49,9 +49,9 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_SYNC_ROUNDS 20 // tries of 115200/19200/9600, about 12 s each
 #define MODEM_REG_TRIES  30           // CGREG polls, 3 s apart
 #define MODEM_BOOT_MS    8000         // power-up to first AT
-#define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
+#define MODEM_ALWAYS_ON  0            // 1: gate held high (USB power); 0: modem only powered during a push
 #define MODEM_START_DELAY_S 600       // modem stays unpowered this long after boot so the supply caps charge first
-#define PUSH_OFF_S       120  // modem stays off this long, then powers up and pushes
+#define PUSH_CYCLE_S     300  // one push every this long: modem on for the session, off for the rest
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
 #define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
 
@@ -285,7 +285,7 @@ off:
     return done;
 }
 
-// Loop: modem off for PUSH_OFF_S, then one session. If nothing got through, count one failure
+// Loop: one session every PUSH_CYCLE_S, modem off in between. If nothing got through, count one failure
 // and carry on; the rows stay queued for the next round.
 static void ingest_task(void *arg) {
     api_reading_t batch[INGEST_BATCH];
@@ -313,16 +313,15 @@ static void ingest_task(void *arg) {
     vTaskDelay(pdMS_TO_TICKS(MODEM_START_DELAY_S * 1000));  // push_session powers it on
 
     for (;;) {
+        int64_t started = esp_timer_get_time();
         esp_pm_lock_acquire(s_awake);
         bool done = push_session(netif, dte, batch, &n);
         esp_pm_lock_release(s_awake);
-        if (done) {
-            ESP_LOGI(TAG, "Push done, modem off for %d s (fails so far: %u)", PUSH_OFF_S, (unsigned)s_push_fails);
-        } else {
-            s_push_fails++;
-            ESP_LOGW(TAG, "No push, modem off for %d s (fails so far: %u)", PUSH_OFF_S, (unsigned)s_push_fails);
-        }
-        vTaskDelay(pdMS_TO_TICKS(PUSH_OFF_S * 1000));
+        if (!done) s_push_fails++;
+        int off_s = PUSH_CYCLE_S - (int)((esp_timer_get_time() - started) / 1000000);
+        if (off_s < 10) off_s = 10;  // a session that ran over still gets a pause
+        ESP_LOGI(TAG, "%s, modem off for %d s (fails so far: %u)", done ? "Push done" : "No push", off_s, (unsigned)s_push_fails);
+        vTaskDelay(pdMS_TO_TICKS(off_s * 1000));
     }
 }
 
