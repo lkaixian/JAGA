@@ -145,6 +145,7 @@ static void sonar_test(void) {
     gpio_set_level(SONAR_TX_PIN, 0);
     gpio_reset_pin(SONAR_RX_PIN);
     gpio_set_direction(SONAR_RX_PIN, GPIO_MODE_INPUT);
+    gpio_pullup_dis(SONAR_RX_PIN);  // gpio_reset_pin leaves the pull-up on; the real driver turns it off too
     gpio_pulldown_en(SONAR_RX_PIN);
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
