@@ -38,6 +38,8 @@ static QueueHandle_t s_ingest_q;
 // Put a 100k pulldown on the gate so the modem stays off while the ESP32 boots.
 // The mini board powers up by itself when supplied (PWRKEY is not driven).
 #define MODEM_PWR_PIN    GPIO_NUM_16
+#define MODEM_PWR_ACTIVE 1            // gate level that powers the modem; 0 if a transistor inverts the gate drive
+#define MODEM_POWER(on)  gpio_set_level(MODEM_PWR_PIN, (on) ? MODEM_PWR_ACTIVE : !MODEM_PWR_ACTIVE)
 #define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> board pin 3VT (labels are from the MCU side)
 #define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- board pin 3VR, idles at 4 V: keep a 1k in series
 #define MODEM_USE_KEY    0            // 1: press the key if no AT answer. Off: this board boots by itself and the key toggles it OFF
@@ -192,7 +194,7 @@ static void modem_ask(modem_dte_t *dte, modem_dce_t *dce, const char *cmd, uint3
 // One modem session: power up, dial PPP, push everything queued, hang up, power off.
 // Returns true if the queue was emptied. Rows that did not go stay in batch[0..*n) and the queue.
 static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *batch, int *n) {
-    gpio_set_level(MODEM_PWR_PIN, 1);
+    MODEM_POWER(1);
     vTaskDelay(pdMS_TO_TICKS(MODEM_BOOT_MS));  // also covers boot of a module that was powered at startup
     xEventGroupClearBits(s_ev, BIT_GOT_IP | BIT_STOPPED);
 
@@ -279,7 +281,7 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
     esp_modem_netif_teardown(adapter);
     dce->deinit(dce);
 off:
-    if (!MODEM_ALWAYS_ON) gpio_set_level(MODEM_PWR_PIN, 0);
+    if (!MODEM_ALWAYS_ON) MODEM_POWER(0);
     return done;
 }
 
@@ -366,7 +368,7 @@ static void at_test_task(void *arg) {
 esp_err_t api_start(void) {
     gpio_reset_pin(MODEM_PWR_PIN);
     gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(MODEM_PWR_PIN, MODEM_ALWAYS_ON && !MODEM_START_DELAY_S);
+    MODEM_POWER(MODEM_ALWAYS_ON && !MODEM_START_DELAY_S);
     gpio_reset_pin(MODEM_KEY_PIN);
     gpio_set_direction(MODEM_KEY_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
