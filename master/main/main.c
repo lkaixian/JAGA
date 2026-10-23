@@ -306,9 +306,9 @@ void app_main(void) {
         if (sample_lock) esp_pm_lock_release(sample_lock);
         packet.timestamp_s = current_timestamp_s();
 
-        ESP_LOGI(TAG, "Node %u (self) -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | t=%us",
+        ESP_LOGI(TAG, "Node %u (self) -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | Batt: %u mV | t=%us",
                  packet.node_id, packet.temperature, packet.humidity, packet.distance_mm,
-                 packet.distance_stddev_mm, (long)packet.water_level_mm, packet.timestamp_s);
+                 packet.distance_stddev_mm, (long)packet.water_level_mm, packet.batt_mv, packet.timestamp_s);
 
         log_telemetry(packet.timestamp_s, &packet);
 
