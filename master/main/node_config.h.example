@@ -9,7 +9,7 @@
 
 // Fixed sensor mount geometry, measured once at installation.
 // TODO: replace with this node's real measured values.
-#define SONAR_MOUNT_HEIGHT_MM   1000   // vertical height of sensor above the reference (e.g. tank bottom)
+#define SONAR_MOUNT_HEIGHT_MM   400    // vertical height of sensor above the reference (e.g. tank bottom)
 #define SONAR_MOUNT_ANGLE_DEG   0.0f   // tilt of sensor axis from vertical (0 = straight down)
 
 // Sonar readings beyond this are rejected as noise. Defaults to the sensor's

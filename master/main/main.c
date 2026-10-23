@@ -205,9 +205,11 @@ void app_main(void) {
 
         uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
         int valid_samples = 0;
+        esp_err_t sonar_err = ESP_OK;
         for (int i = 0; sonar_ok && i < SONAR_SAMPLE_COUNT; i++) {
             uint32_t d;
-            bool sample_ok = (jsnsr40t_read(&sonar, &d, 300) == ESP_OK);
+            sonar_err = jsnsr40t_read(&sonar, &d, 300);
+            bool sample_ok = (sonar_err == ESP_OK);
             if (sample_ok) {
                 sonar_samples[valid_samples++] = d;
             }
@@ -215,7 +217,7 @@ void app_main(void) {
         }
 
         if (valid_samples == 0) {
-            ESP_LOGW(TAG, "Sonar read failed (0/%d samples valid).", SONAR_SAMPLE_COUNT);
+            ESP_LOGW(TAG, "Sonar read failed (0/%d samples valid, last error: %s).", SONAR_SAMPLE_COUNT, esp_err_to_name(sonar_err));
             packet.distance_mm = 0;
             packet.distance_stddev_mm = 0;
             packet.water_level_mm = INT32_MIN;
