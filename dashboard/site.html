@@ -527,7 +527,7 @@ async function fetchApi(){
     const rows = results[i].value;
     env[n.id] = toEnv(rows);                                 // every row counts here, even when the sonar failed
     // newest raw row decides live / fault / no signal; older valid points still feed chart and rate
-    meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, rx: rows[0].received_at ?? rows[0].log_timestamp_s, srv: rows[0].received_at != null } : null;
+    meta[n.id] = rows.length ? { fault: rows[0].water_level_mm === SONAR_ERR, batt: rows[0].battery_v, rssi: rows[0].rssi_dbm, retries: rows[0].link_retries, rx: rows[0].received_at ?? rows[0].log_timestamp_s, srv: rows[0].received_at != null } : null;
     store[n.id] = rows.slice().reverse()
       .filter(r => r.water_level_mm !== SONAR_ERR)
       .map(r => ({
@@ -900,8 +900,8 @@ function drawTable(){
         <td class="num">${has ? p.level.toFixed(2) + ' m' : '—'}</td>
         <td class="num" style="color:${rate>=CFG.rateWarning?'var(--siren)':rate>=CFG.rateWatch?'var(--amber)':'inherit'}">${has ? (rate>=0?'+':'') + rate.toFixed(2) : '—'}</td>
         <td class="num hide-sm">${p?.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
-        <td class="num hide-sm">${p?.batt == null ? '—' : p.batt.toFixed(2) + ' V'}</td>
-        <td class="num hide-sm">${p?.rssi == null ? '—' : p.rssi + ' dBm'}</td>
+        <td class="num hide-sm">${(b => b == null ? '—' : b.toFixed(2) + ' V')(SOURCE.mode === 'api' ? meta[n.id]?.batt : p?.batt)}</td>
+        <td class="num hide-sm">${(r => r == null ? '—' : r + ' dBm')(SOURCE.mode === 'api' ? meta[n.id]?.rssi : p?.rssi)}</td>
         <td class="num hide-sm">${lastOf(n.id, 'temp') ? lastOf(n.id, 'temp').temp.toFixed(1) + ' °C' : '—'}</td>
         <td class="num hide-sm">${lastOf(n.id, 'hum') ? lastOf(n.id, 'hum').hum.toFixed(0) + ' %' : '—'}</td>
         <td><span class="chip ${cc}">${ct}</span>${lostSev ? ' <span class="chip stale">No signal</span>' : ''}</td>
@@ -1004,12 +1004,26 @@ function render(){
   $('rainV').innerHTML = none(p.rain) ? '— <small>mm/h</small>' : `${p.rain.toFixed(1)} <small>mm/h</small>`;
   $('rainSub').textContent = none(p.rain) ? 'No rain gauge fitted' : p.rain > 40 ? 'Intense — convective cell' : p.rain > 10 ? 'Moderate' : 'Light';
 
-  $('battV').className = 'v ' + (none(p.batt) ? '' : p.batt < 3.4 ? 'bad' : p.batt < 3.7 ? 'warn' : 'good');
-  $('battV').innerHTML = none(p.batt) ? '— <small>V</small>' : `${p.batt.toFixed(2)} <small>V</small>`;
-  $('battSub').textContent = none(p.batt) ? 'Not monitored' : Math.round((p.batt-3.2)/(4.2-3.2)*100) + '% — 7-day autonomy';
+  // api mode reads the newest row (the sonar may be failing); the simulator keeps them in the store
+  const live = SOURCE.mode === 'api', m = meta[n.id] || {};
+  const batt = live ? m.batt : p.batt, rssi = live ? m.rssi : p.rssi, retries = live ? m.retries : null;
+  $('battV').className = 'v ' + (none(batt) ? '' : batt < 3.4 ? 'bad' : batt < 3.7 ? 'warn' : 'good');
+  $('battV').innerHTML = none(batt) ? '— <small>V</small>' : `${batt.toFixed(2)} <small>V</small>`;
+  $('battSub').textContent = none(batt) ? 'Not monitored' : Math.round(Math.max(0, Math.min(1, (batt-3.2)/(4.2-3.2)))*100) + '% charge';
 
-  $('rssiV').innerHTML = none(p.rssi) ? '— <small>dBm</small>' : `${p.rssi} <small>dBm</small>`;
-  $('rssiSub').textContent = none(p.rssi) ? 'nRF24 reports no RSSI' : 'SNR ' + p.snr + ' dB · SF9';
+  if(!none(rssi)){                // the master: signal of its SIM900A
+    $('rssiV').className = 'v ' + (rssi > -70 ? 'good' : rssi > -85 ? 'warn' : 'bad');
+    $('rssiV').innerHTML = `${rssi} <small>dBm</small>`;
+    $('rssiSub').textContent = live ? 'SIM900A mobile signal' : 'SNR ' + p.snr + ' dB · SF9';
+  } else if(!none(retries)){      // a slave: how hard its nRF24 had to try to reach the master
+    $('rssiV').className = 'v ' + (retries <= 2 ? 'good' : retries <= 8 ? 'warn' : 'bad');
+    $('rssiV').innerHTML = retries <= 2 ? 'Good' : retries <= 8 ? 'Fair' : 'Weak';
+    $('rssiSub').textContent = `nRF24 · ${retries} ${retries === 1 ? 'retry' : 'retries'}`;
+  } else {
+    $('rssiV').className = 'v';
+    $('rssiV').innerHTML = '— <small>dBm</small>';
+    $('rssiSub').textContent = 'Not reported';
+  }
 
   if(SOURCE.mode === 'simulate'){
     $('seenV').innerHTML = `${(Date.now()/1000|0) % 60} <small>s ago</small>`;
