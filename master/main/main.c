@@ -139,6 +139,7 @@ static void sonar_uart_probe(void) {  // serial-mode boards (JSN-SR04T R27 fitte
 }
 
 static void sonar_test(void) {
+    ESP_LOGW(TAG, "SONAR TEST build %s %s (pull-up off)", __DATE__, __TIME__);
     sonar_uart_probe();
     gpio_reset_pin(SONAR_TX_PIN);
     gpio_set_direction(SONAR_TX_PIN, GPIO_MODE_OUTPUT);
