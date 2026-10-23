@@ -35,10 +35,10 @@ static const char *TAG = "API";
 static QueueHandle_t s_ingest_q;
 
 // Gates the SIM900A's power (logic-level N-MOSFET on its ground, high = on).
-// Put a 100k pulldown on the gate so the modem stays off while the ESP32 boots.
+// IRFZ gate is driven from 5 V by an NPN (GPIO16 -> 1k -> base, 10k from GPIO16 to 3V3): see MODEM_PWR_ACTIVE.
 // The mini board powers up by itself when supplied (PWRKEY is not driven).
 #define MODEM_PWR_PIN    GPIO_NUM_16
-#define MODEM_PWR_ACTIVE 1            // gate level that powers the modem; 0 if a transistor inverts the gate drive
+#define MODEM_PWR_ACTIVE 0            // gate level that powers the modem; 0 if a transistor inverts the gate drive
 #define MODEM_POWER(on)  gpio_set_level(MODEM_PWR_PIN, (on) ? MODEM_PWR_ACTIVE : !MODEM_PWR_ACTIVE)
 #define MODEM_TX_PIN     GPIO_NUM_17  // ESP32 TX -> board pin 3VT (labels are from the MCU side)
 #define MODEM_RX_PIN     GPIO_NUM_27  // ESP32 RX <- board pin 3VR, idles at 4 V: keep a 1k in series
