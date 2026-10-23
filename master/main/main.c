@@ -42,7 +42,7 @@ typedef struct __attribute__((packed)) {
 // Sensor Pin Definitions (same physical layout as the slave nodes)
 #define DHT_GPIO        GPIO_NUM_4
 #define SONAR_TX_PIN    GPIO_NUM_14
-#define SONAR_RX_PIN    GPIO_NUM_26
+#define SONAR_RX_PIN    GPIO_NUM_33  // ECHO, through the divider (GPIO26 read high with nothing attached)
 
 // nRF24 SPI Pin Definitions
 #define NRF_SCK         GPIO_NUM_19
