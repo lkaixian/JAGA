@@ -48,6 +48,7 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_REG_TRIES  30           // CGREG polls, 3 s apart
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
+#define MODEM_START_DELAY_S 600       // modem stays unpowered this long after boot so the supply caps charge first
 #define PUSH_OFF_S       120  // modem stays off this long, then powers up and pushes
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
 #define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
@@ -306,6 +307,8 @@ static void ingest_task(void *arg) {
         vTaskDelete(NULL);
     }
     esp_modem_set_event_handler(dte, on_modem_event, ESP_EVENT_ANY_ID, NULL);
+    ESP_LOGI(TAG, "Modem stays off for %d s so the supply can charge", MODEM_START_DELAY_S);
+    vTaskDelay(pdMS_TO_TICKS(MODEM_START_DELAY_S * 1000));  // push_session powers it on
 
     for (;;) {
         esp_pm_lock_acquire(s_awake);
@@ -363,7 +366,7 @@ static void at_test_task(void *arg) {
 esp_err_t api_start(void) {
     gpio_reset_pin(MODEM_PWR_PIN);
     gpio_set_direction(MODEM_PWR_PIN, GPIO_MODE_OUTPUT);
-    gpio_set_level(MODEM_PWR_PIN, MODEM_ALWAYS_ON);
+    gpio_set_level(MODEM_PWR_PIN, MODEM_ALWAYS_ON && !MODEM_START_DELAY_S);
     gpio_reset_pin(MODEM_KEY_PIN);
     gpio_set_direction(MODEM_KEY_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(MODEM_KEY_PIN, !MODEM_KEY_ACTIVE);
