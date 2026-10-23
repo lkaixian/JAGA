@@ -3,6 +3,7 @@
 #include "battery.h"
 
 uint16_t battery_mv(void) {
+    if (!BATT_FITTED) return 0;
     static esp_adc_cal_characteristics_t cal;
     static bool ready;
     if (!ready) {

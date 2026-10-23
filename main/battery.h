@@ -4,6 +4,10 @@
 
 // Battery voltage on an ADC1 pin through a divider. Defaults: GPIO35, two equal resistors.
 // Tune BATT_CAL against a multimeter reading (real volts / reported volts).
+// 0 until the divider is soldered: a floating pin reads random volts, so report nothing.
+#ifndef BATT_FITTED
+#define BATT_FITTED 0
+#endif
 #ifndef BATT_ADC_CHANNEL
 #define BATT_ADC_CHANNEL ADC1_CHANNEL_7  // GPIO35
 #endif
