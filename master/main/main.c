@@ -12,6 +12,7 @@
 #include "esp_task_wdt.h"
 #include "esp_pm.h"
 #include "esp_rom_sys.h"
+#include "driver/uart.h"
 
 #include "dht22.h"
 #include "jsnsr40t.h"
@@ -120,7 +121,25 @@ static int drain_radio(nrf24_t *radio) {
 #define SONAR_TEST 0
 
 #if SONAR_TEST
+static void sonar_uart_probe(void) {  // serial-mode boards (JSN-SR04T R27 fitted) answer 0xFF,H,L,SUM at 9600 baud
+    uart_config_t c = { .baud_rate = 9600, .data_bits = UART_DATA_8_BITS, .parity = UART_PARITY_DISABLE,
+                        .stop_bits = UART_STOP_BITS_1, .flow_ctrl = UART_HW_FLOWCTRL_DISABLE, .source_clk = UART_SCLK_APB };
+    uart_param_config(UART_NUM_1, &c);
+    uart_set_pin(UART_NUM_1, SONAR_TX_PIN, SONAR_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_driver_install(UART_NUM_1, 256, 0, 0, NULL, 0);
+    for (int i = 0; i < 5; i++) {
+        uint8_t buf[16];
+        uart_flush_input(UART_NUM_1);
+        uart_write_bytes(UART_NUM_1, "U", 1);  // trigger for the "serial on command" mode
+        int n = uart_read_bytes(UART_NUM_1, buf, sizeof(buf), pdMS_TO_TICKS(500));
+        if (n > 0) ESP_LOG_BUFFER_HEXDUMP(TAG, buf, n, ESP_LOG_ERROR);
+        else ESP_LOGE(TAG, "SONAR TEST: serial probe %d: nothing at 9600 baud", i + 1);
+    }
+    uart_driver_delete(UART_NUM_1);
+}
+
 static void sonar_test(void) {
+    sonar_uart_probe();
     gpio_reset_pin(SONAR_TX_PIN);
     gpio_set_direction(SONAR_TX_PIN, GPIO_MODE_OUTPUT);
     gpio_set_level(SONAR_TX_PIN, 0);
