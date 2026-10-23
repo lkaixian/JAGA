@@ -15,7 +15,7 @@
 #define BATT_DIVIDER 2.0f
 #endif
 #ifndef BATT_CAL
-#define BATT_CAL 1.0f
+#define BATT_CAL 1.547f  // 4016 mV on the meter read 2596 mV; recheck at another charge level
 #endif
 
 /** @brief Battery voltage in mV. */
