@@ -13,6 +13,7 @@
 #include "dht22.h"
 #include "jsnsr40t.h"
 #include "nrf24.h"
+#include "battery.h"
 #include "node_config.h"
 
 static const char *TAG = "MAIN_NODE";
@@ -27,6 +28,8 @@ typedef struct __attribute__((packed)) {
     uint32_t distance_stddev_mm; // spread across those samples (0 if <2 valid)
     int32_t water_level_mm;      // INT32_MIN when every sonar sample failed
     uint32_t timestamp_s;        // seconds since this node's last power-on (the master stamps wall-clock time on receipt)
+    uint16_t batt_mv;            // battery voltage
+    uint8_t link_retries;        // nRF24 retries the previous acknowledged send needed (0-15), 255 = none yet
 } telemetry_packet_t;
 
 #define SONAR_SAMPLE_COUNT 10
@@ -59,6 +62,7 @@ RTC_DATA_ATTR static int64_t uptime_us_at_wake = 0;
 #define UNSENT_MAX 5
 RTC_DATA_ATTR static telemetry_packet_t unsent[UNSENT_MAX];
 RTC_DATA_ATTR static uint8_t unsent_n = 0;
+RTC_DATA_ATTR static uint8_t last_retries = 255;
 
 // The nRF24 already retries 15 times in hardware; these are on top of that.
 static bool send_with_retry(nrf24_t *radio, const telemetry_packet_t *p) {
@@ -95,6 +99,8 @@ void app_main(void) {
 
     telemetry_packet_t packet = {0};
     packet.node_id = NODE_ID;
+    packet.batt_mv = battery_mv();
+    packet.link_retries = last_retries;
 
 
     // DHT22 requires a minimum of 2 seconds since power-on before it responds
@@ -177,6 +183,7 @@ void app_main(void) {
         }
     }
     if (sent) sent = send_with_retry(&radio, &packet);
+    if (sent) last_retries = radio.last_retries; // reported with the next reading
     if (!sent) {
         if (unsent_n == UNSENT_MAX) { // full: drop the oldest
             memmove(&unsent[0], &unsent[1], (UNSENT_MAX - 1) * sizeof(unsent[0]));

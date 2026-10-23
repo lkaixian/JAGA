@@ -47,7 +47,7 @@ static QueueHandle_t s_ingest_q;
 #define MODEM_REG_TRIES  30           // CGREG polls, 3 s apart
 #define MODEM_BOOT_MS    8000         // power-up to first AT
 #define MODEM_ALWAYS_ON  1            // 1: gate held high (USB power); 0: modem only powered during a push
-#define PUSH_OFF_S       480  // modem stays off this long, then powers up and pushes
+#define PUSH_OFF_S       120  // modem stays off this long, then powers up and pushes
 #define PUSH_GIVE_UP_S   300  // no successful push by then: count a failure, power down
 #define TIME_VALID_S     1600000000   // system clock is real (SNTP) above this
 
@@ -60,6 +60,7 @@ static uint32_t s_push_fails;
 static esp_pm_lock_handle_t s_awake;  // no light sleep while the modem is up: UART and PPP need the CPU
 
 static bool s_rtc_ok, s_sd_ok, s_radio_ok;
+static int s_sim_rssi_dbm;  // from the last AT+CSQ, 0 = none yet
 
 static void on_ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (id == IP_EVENT_PPP_GOT_IP) {
@@ -90,6 +91,10 @@ static cJSON *reading_to_json(const api_reading_t *r) {
     cJSON_AddNumberToObject(o, "distance_mm", r->distance_mm);
     cJSON_AddNumberToObject(o, "distance_stddev_mm", r->distance_stddev_mm);
     cJSON_AddNumberToObject(o, "water_level_mm", r->water_level_mm);
+    if (r->battery_mv) cJSON_AddNumberToObject(o, "battery_v", r->battery_mv / 1000.0);
+    if (r->link_retries != 255) cJSON_AddNumberToObject(o, "link_retries", r->link_retries);
+    // ponytail: the master's own rows get the newest SIM signal, not the one from when they were sampled
+    if (r->node_id == NODE_ID && s_sim_rssi_dbm) cJSON_AddNumberToObject(o, "rssi_dbm", s_sim_rssi_dbm);
     return o;
 }
 
@@ -225,6 +230,7 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
     dce->store_profile(dce);
     uint32_t rssi = 0, ber = 0;
     if (dce->get_signal_quality(dce, &rssi, &ber) == ESP_OK) {
+        if (rssi <= 31) s_sim_rssi_dbm = -113 + 2 * (int)rssi;  // 99 = unknown
         ESP_LOGI(TAG, "Modem %s, operator '%s', rssi %u (0-31, 99 = none)", dce->name, dce->oper, (unsigned)rssi);
     }
 

@@ -15,6 +15,7 @@
 #include "dht22.h"
 #include "jsnsr40t.h"
 #include "nrf24.h"
+#include "battery.h"
 #include "api.h"
 #include "node_config.h"
 
@@ -31,6 +32,8 @@ typedef struct __attribute__((packed)) {
     uint32_t distance_stddev_mm;
     int32_t water_level_mm;
     uint32_t timestamp_s;
+    uint16_t batt_mv;
+    uint8_t link_retries;
 } telemetry_packet_t;
 
 #define SONAR_SAMPLE_COUNT 10
@@ -86,6 +89,8 @@ static void log_telemetry(uint32_t log_timestamp_s, const telemetry_packet_t *p)
         .distance_mm = p->distance_mm,
         .distance_stddev_mm = p->distance_stddev_mm,
         .water_level_mm = p->water_level_mm,
+        .battery_mv = p->batt_mv,
+        .link_retries = p->link_retries,
     });
 }
 
@@ -178,6 +183,8 @@ void app_main(void) {
 
         telemetry_packet_t packet = {0};
         packet.node_id = NODE_ID;
+        packet.batt_mv = battery_mv();
+        packet.link_retries = 255; // the master has no radio hop to itself; its link is the SIM (rssi_dbm)
         if (sample_lock) esp_pm_lock_acquire(sample_lock);
 
         // DHT22 requires a minimum of 2 seconds between reads

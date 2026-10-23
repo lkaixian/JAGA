@@ -139,6 +139,7 @@ esp_err_t nrf24_send_packet(nrf24_t *dev, const void *data, uint8_t len) {
         uint8_t status = read_register(dev, NRF24_REG_STATUS);
 
         if (status & (1 << 5)) { // TX_DS: Ack received
+            dev->last_retries = read_register(dev, NRF24_REG_OBSERVE_TX) & 0x0F; // ARC_CNT
             write_register(dev, NRF24_REG_STATUS, (1 << 5)); // Clear bit
             return ESP_OK;
         }

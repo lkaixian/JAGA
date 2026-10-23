@@ -27,6 +27,7 @@ extern "C" {
 #define NRF24_REG_RF_CH         0x05
 #define NRF24_REG_RF_SETUP      0x06
 #define NRF24_REG_STATUS        0x07
+#define NRF24_REG_OBSERVE_TX    0x08
 #define NRF24_REG_RX_ADDR_P0    0x0A
 #define NRF24_REG_TX_ADDR       0x10
 #define NRF24_REG_RX_PW_P0      0x11
@@ -36,6 +37,7 @@ typedef struct {
     spi_device_handle_t spi;
     gpio_num_t ce_pin;
     gpio_num_t csn_pin;
+    uint8_t last_retries; // hardware retries the last acknowledged send needed (0-15)
 } nrf24_t;
 
 /**

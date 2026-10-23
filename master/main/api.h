@@ -21,6 +21,8 @@ typedef struct {
     uint32_t distance_mm;
     uint32_t distance_stddev_mm;
     int32_t  water_level_mm;
+    uint16_t battery_mv;    // 0 = not measured
+    uint8_t  link_retries;  // nRF24 retries of the slave's last send, 255 = unknown
 } api_reading_t;
 
 // Timestamp used for log_timestamp_s (RTC wall time, or seconds since boot).
