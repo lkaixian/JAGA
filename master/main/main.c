@@ -11,6 +11,7 @@
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "esp_pm.h"
+#include "esp_rom_sys.h"
 
 #include "dht22.h"
 #include "jsnsr40t.h"
@@ -115,6 +116,38 @@ static int drain_radio(nrf24_t *radio) {
     return received;
 }
 
+// 1: skip everything else and print what the sonar pins do, once a second (wiring/power check).
+#define SONAR_TEST 0
+
+#if SONAR_TEST
+static void sonar_test(void) {
+    gpio_reset_pin(SONAR_TX_PIN);
+    gpio_set_direction(SONAR_TX_PIN, GPIO_MODE_OUTPUT);
+    gpio_set_level(SONAR_TX_PIN, 0);
+    gpio_reset_pin(SONAR_RX_PIN);
+    gpio_set_direction(SONAR_RX_PIN, GPIO_MODE_INPUT);
+    gpio_pulldown_en(SONAR_RX_PIN);
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        int idle = gpio_get_level(SONAR_RX_PIN);
+        gpio_set_level(SONAR_TX_PIN, 1);
+        esp_rom_delay_us(20);
+        gpio_set_level(SONAR_TX_PIN, 0);
+        int64_t t0 = esp_timer_get_time(), rise = -1, fall = -1;
+        while (esp_timer_get_time() - t0 < 100000) {  // 100 ms covers the sensor's own no-target ceiling (60 ms)
+            int lv = gpio_get_level(SONAR_RX_PIN);
+            int64_t now = esp_timer_get_time();
+            if (rise < 0 && lv) rise = now;
+            if (rise >= 0 && !lv) { fall = now; break; }
+        }
+        if (idle) ESP_LOGE(TAG, "SONAR TEST: ECHO idles HIGH (board in serial mode, ECHO wired to 3V3/5V, or divider missing)");
+        else if (rise < 0) ESP_LOGE(TAG, "SONAR TEST: ECHO idles low but never rose after TRIG: no power (check 5 V at VCC), TRIG/ECHO swapped, or GND open");
+        else if (fall < 0) ESP_LOGE(TAG, "SONAR TEST: ECHO rose but stayed high over 100 ms: line stuck high");
+        else ESP_LOGI(TAG, "SONAR TEST: OK, pulse %lld us = %lld mm", (long long)(fall - rise), (long long)((fall - rise) * 340 / 2 / 1000));
+    }
+}
+#endif
+
 static const char *reset_reason_str(esp_reset_reason_t reason) {
     switch (reason) {
         case ESP_RST_POWERON:   return "POWERON (fresh power-up, or a brownout severe enough to look like one)";
@@ -135,6 +168,9 @@ void app_main(void) {
 
     ESP_LOGI(TAG, "Initializing hardware subsystems...");
     ESP_LOGI(TAG, "Boot reason: %s", reset_reason_str(esp_reset_reason()));
+#if SONAR_TEST
+    sonar_test();
+#endif
 
     // Light sleep whenever every task is blocked. Clock is fixed at 160 MHz so the
     // bit-banged DHT22 and UART timings don't move. Needs CONFIG_PM_ENABLE and
