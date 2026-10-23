@@ -11,6 +11,7 @@
 #include "esp_netif.h"
 #include "esp_netif_ppp.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_pm.h"
 #include "cJSON.h"
@@ -265,7 +266,14 @@ static bool push_session(esp_netif_t *netif, modem_dte_t *dte, api_reading_t *ba
         ESP_LOGW(TAG, "No PPP link (SIM, APN, signal, or no 2G coverage?)");
     }
 
-    if (esp_modem_stop_ppp(dte) == ESP_OK) xEventGroupWaitBits(s_ev, BIT_STOPPED, pdTRUE, pdTRUE, pdMS_TO_TICKS(5000));
+    if (esp_modem_stop_ppp(dte) == ESP_OK) {
+        xEventGroupWaitBits(s_ev, BIT_STOPPED, pdTRUE, pdTRUE, pdMS_TO_TICKS(5000));
+    } else if (!done) {
+        // The modem never left data mode, so its driver task is still feeding lines to a dce that the teardown below
+        // frees (that crashed in the heap). Restart cleanly instead; the unsent rows in RAM are lost either way.
+        ESP_LOGE(TAG, "Could not leave PPP, restarting");
+        esp_restart();
+    }
     esp_modem_netif_clear_default_handlers(adapter);
     esp_modem_netif_teardown(adapter);
     dce->deinit(dce);
