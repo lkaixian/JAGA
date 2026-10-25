@@ -211,6 +211,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     config = null;
     levelsNote = false;
     _historyLoaded.clear();
+    _sim.clear();
+    _simMin.clear();
+    _simLevel.clear();
     _lastStatus.clear();
     _lastHealth.clear();
   }
