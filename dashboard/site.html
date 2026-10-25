@@ -2,403 +2,388 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<link rel="icon" href="/favicon.ico" sizes="48x48">
-<!-- This site is hosted on Netlify. Anyone can build and deploy a site
-     like this one for free: https://netlify.new/?utm_campaign=loops&utm_source=ai-legible&utm_medium=owned&utm_content=comment&utm_id=c926b064-579b-4199-bb22-9365d4eaa640
-     Netlify hosting facts for this site: static/SSR served via Netlify Edge. -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>J.A.G.A — Jaringan Amaran Geo-Spatial & AI</title>
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="apple-touch-icon" href="/logo.png">
+<title>J.A.G.A — Jaringan Amaran Geo-Spatial &amp; AI</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-<script src="/river.js"></script>
 <style>
 :root{
-  --abyss:#061726;
-  --hull:#0C2941;
-  --panel:#0F3252;
-  --rule:#1B4B72;
-  --signal:#2FE3BE;
-  --amber:#FFB020;
-  --siren:#FF5A47;
-  --mist:#7FA6C6;
-  --paper:#E7F3FF;
-
+  --abyss:#020C17; --deep:#05182B; --hull:#082139; --panel:#0B2B4A;
+  --rule:#144063; --rule-hot:#1E6394;
+  --signal:#2FE3BE; --ion:#39BDF8; --amber:#FFB020; --siren:#FF5A47;
+  --sky:#7FE0FF; --mist:#7BA2C2; --paper:#E9F4FF;
   --font-display:'Saira Condensed','Arial Narrow',system-ui,sans-serif;
   --font-body:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;
   --font-mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --gap:clamp(5px,.8vh,10px);
+  --pad:clamp(6px,1.1vh,13px);
 }
-
 *{box-sizing:border-box}
-html,body{margin:0;padding:0}
+html,body{margin:0;padding:0;height:100%}
 body{
   background:
-    radial-gradient(1200px 600px at 15% -10%, #10395C 0%, transparent 60%),
-    var(--abyss);
-  color:var(--paper);
-  font-family:var(--font-body);
-  font-size:14px;
-  line-height:1.45;
-  min-height:100vh;
-  padding:20px;
+    radial-gradient(1100px 620px at 10% -12%,#10486F 0%,transparent 58%),
+    radial-gradient(820px 520px at 96% 110%,#0A3E6B 0%,transparent 56%),
+    linear-gradient(180deg,#041322 0%,var(--abyss) 100%);
+  color:var(--paper);font-family:var(--font-body);line-height:1.3;overflow:hidden;
 }
-.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(47,227,190,.022) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(47,227,190,.022) 1px,transparent 1px);
+  background-size:46px 46px;
+  mask-image:radial-gradient(120% 100% at 50% 40%,#000 30%,transparent 100%);
+}
+.shell{position:relative;z-index:1;height:100%;
+  padding:var(--gap) clamp(8px,.9vw,16px);
+  display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:var(--gap);min-height:0}
 
 /* ---------- header ---------- */
-.topbar{
-  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
-  border-bottom:1px solid var(--rule);padding-bottom:14px;
-}
-.mark{display:flex;align-items:baseline;gap:10px}
-.mark b{
-  font-family:var(--font-display);font-weight:700;font-size:30px;
-  letter-spacing:.10em;line-height:1;color:var(--paper);
-}
-.mark span{
-  font-family:var(--font-display);font-weight:500;font-size:12px;
-  letter-spacing:.22em;text-transform:uppercase;color:var(--mist);
-}
-.topbar .spacer{flex:1}
-.site{font-family:var(--font-mono);font-size:13px;color:var(--mist);max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media(max-width:600px){.site{max-width:14ch}}
-.clock{font-family:var(--font-mono);font-size:13px;color:var(--mist);letter-spacing:.04em}
-.homelink{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mist);text-decoration:none;border:1px solid var(--rule);border-radius:999px;padding:5px 11px}
-.homelink:hover,.homelink:focus-visible{color:var(--paper);border-color:var(--signal)}
-.livepill{
-  display:inline-flex;align-items:center;gap:7px;
-  font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-  border:1px solid var(--rule);border-radius:999px;padding:5px 11px;color:var(--mist);
-}
-.dot{width:7px;height:7px;border-radius:50%;background:var(--signal);animation:beat 2s infinite}
-@keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
+.topbar{display:flex;align-items:center;gap:clamp(6px,1vw,14px);position:relative;
+  padding-bottom:calc(var(--gap)*.65);flex-wrap:nowrap}
+.topbar::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:linear-gradient(90deg,var(--signal),var(--rule) 22%,var(--rule) 78%,var(--ion));opacity:.55}
+.mark{display:flex;align-items:baseline;gap:9px;min-width:0}
+.mark b{font-family:var(--font-display);font-weight:700;font-size:clamp(16px,2.6vh,28px);
+  letter-spacing:.10em;line-height:1;text-shadow:0 0 22px rgba(47,227,190,.45)}
+.logo{height:clamp(24px,4vh,42px);width:auto;display:block;flex:none}
+.mark span{font-family:var(--font-display);font-weight:500;font-size:clamp(7px,1.05vh,11px);
+  letter-spacing:.22em;text-transform:uppercase;color:var(--mist);white-space:nowrap}
+.spacer{flex:1}
+.clock{font-family:var(--font-mono);font-size:clamp(9px,1.3vh,13px);color:var(--mist);white-space:nowrap}
+.livepill{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
+  font-family:var(--font-mono);font-size:clamp(7px,.95vh,10px);letter-spacing:.10em;
+  text-transform:uppercase;border:1px solid var(--rule-hot);border-radius:999px;
+  padding:4px 10px;color:var(--mist);background:rgba(47,227,190,.04)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--signal);
+  box-shadow:0 0 9px var(--signal);animation:beat 2s infinite}
+@keyframes beat{0%,100%{opacity:1}50%{opacity:.2}}
+.exports{display:flex;gap:5px;flex:none}
+.btn{font-family:var(--font-mono);font-size:clamp(7px,.95vh,10px);letter-spacing:.08em;
+  text-transform:uppercase;background:rgba(47,227,190,.06);border:1px solid var(--rule-hot);
+  color:var(--sky);border-radius:3px;padding:5px 9px;cursor:pointer;white-space:nowrap;
+  transition:background .15s,box-shadow .15s,color .15s}
+.btn:hover{background:rgba(47,227,190,.18);box-shadow:0 0 14px rgba(47,227,190,.3)}
+.btn.on{background:rgba(47,227,190,.22);color:var(--paper);border-color:var(--signal);
+  box-shadow:0 0 12px rgba(47,227,190,.22)}
 
-/* ---------- alert banner ---------- */
-.banner{
-  display:none;align-items:center;gap:14px;
-  border-radius:4px;padding:13px 16px;
-  border-left:4px solid var(--amber);
-  background:linear-gradient(90deg,rgba(255,176,32,.16),rgba(255,176,32,.02));
-}
-.banner.on{display:flex;animation:drop .35s ease-out}
-@keyframes drop{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
+/* ---------- status strip ---------- */
+.banner{display:flex;align-items:center;gap:clamp(6px,1vw,14px);border-radius:4px;
+  padding:calc(var(--pad)*.55) var(--pad);border-left:3px solid var(--signal);
+  background:linear-gradient(90deg,rgba(47,227,190,.10),rgba(47,227,190,.01));min-height:0}
 .banner.warning{border-left-color:var(--amber);background:linear-gradient(90deg,rgba(255,176,32,.16),rgba(255,176,32,.02))}
-.banner.danger{border-left-color:var(--siren);background:linear-gradient(90deg,rgba(255,90,71,.18),rgba(255,90,71,.02))}
-.banner.link{border-left-color:var(--mist);background:linear-gradient(90deg,rgba(127,166,198,.18),rgba(127,166,198,.02))}
-.banner.link .tag{color:var(--mist)}
-.banner .tag{
-  font-family:var(--font-display);font-weight:700;font-size:15px;letter-spacing:.14em;
-  text-transform:uppercase;white-space:nowrap;
-}
-.banner.warning .tag{color:var(--amber)}
-.banner.danger .tag{color:var(--siren)}
-.banner .msg{font-size:13.5px;color:var(--paper)}
-.banner .msg em{font-style:normal;font-family:var(--font-mono);color:var(--paper)}
+.banner.danger{border-left-color:var(--siren);background:linear-gradient(90deg,rgba(255,90,71,.22),rgba(255,90,71,.02));
+  animation:alarm 1.6s ease-in-out infinite}
+@keyframes alarm{0%,100%{box-shadow:inset 3px 0 0 rgba(255,90,71,0)}50%{box-shadow:inset 0 0 40px rgba(255,90,71,.16)}}
+.banner .tag{font-family:var(--font-display);font-weight:700;font-size:clamp(10px,1.5vh,15px);
+  letter-spacing:.14em;text-transform:uppercase;white-space:nowrap;color:var(--signal)}
+.banner.warning .tag{color:var(--amber)} .banner.danger .tag{color:var(--siren)}
+.banner .msg{font-size:clamp(9px,1.3vh,13px);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.banner .msg em{font-style:normal;font-family:var(--font-mono)}
+.banner .lead{margin-left:auto;font-family:var(--font-mono);font-size:clamp(8px,1.15vh,12px);
+  color:var(--mist);white-space:nowrap;text-align:right}
+.banner .lead b{display:block;font-size:clamp(13px,2vh,21px);color:var(--paper);font-weight:500}
 
-/* ---------- layout ---------- */
-.row{display:grid;grid-template-columns:340px 1fr;gap:14px;align-items:stretch}
-.card{
-  background:linear-gradient(180deg,var(--hull),var(--panel));
-  border:1px solid var(--rule);border-radius:6px;padding:16px;
-}
-.card h2{
-  margin:0 0 12px;font-family:var(--font-display);font-weight:600;
-  font-size:12px;letter-spacing:.20em;text-transform:uppercase;color:var(--mist);
-}
+/* ---------- grid ---------- */
+.main{display:grid;
+  grid-template-columns:minmax(0,1.4fr) clamp(152px,10.5vw,196px) minmax(0,1.06fr);
+  grid-template-rows:minmax(0,1fr) clamp(94px,12vh,140px);
+  gap:var(--gap);min-height:0}
+.card{position:relative;background:linear-gradient(180deg,var(--hull),var(--panel));
+  border:1px solid var(--rule);border-radius:5px;padding:var(--pad);
+  min-height:0;display:flex;flex-direction:column;
+  box-shadow:0 0 0 1px rgba(47,227,190,.04),0 10px 30px rgba(0,0,0,.35)}
+.card::before,.card::after{content:'';position:absolute;width:11px;height:11px;
+  border:1px solid var(--signal);opacity:.42;pointer-events:none;z-index:2}
+.card::before{top:-1px;left:-1px;border-right:0;border-bottom:0}
+.card::after{bottom:-1px;right:-1px;border-left:0;border-top:0}
+.card h2{margin:0 0 calc(var(--pad)*.45);font-family:var(--font-display);font-weight:600;
+  font-size:clamp(7.5px,1.05vh,11px);letter-spacing:.18em;text-transform:uppercase;
+  color:var(--mist);flex:none;display:flex;align-items:center;gap:7px}
+.card h2::before{content:'';width:3px;height:11px;background:var(--signal);
+  box-shadow:0 0 8px var(--signal);border-radius:1px;flex:none}
+.card h2 .hint{margin-left:auto;font-family:var(--font-mono);letter-spacing:.05em;opacity:.75;text-transform:none}
+.card h2 .btn{padding:3px 7px}
 
-/* ---------- signature: drain cross-section ---------- */
-.gauge{display:flex;flex-direction:column;gap:12px}
-.gauge svg{width:100%;height:auto;display:block}
-.readout{display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
-.readout .big{font-family:var(--font-mono);font-weight:600;font-size:40px;line-height:1;letter-spacing:-.02em}
-.readout .unit{font-family:var(--font-mono);font-size:14px;color:var(--mist);margin-left:4px}
-.readout .where{text-align:right}
-.readout .where b{display:block;font-family:var(--font-display);font-size:17px;letter-spacing:.05em;font-weight:600}
-.readout .where span{font-size:11.5px;color:var(--mist)}
+.c-map{grid-column:1;grid-row:1}
+.c-drain{grid-column:2;grid-row:1}
+.c-right{grid-column:3;grid-row:1;display:grid;grid-template-rows:auto minmax(0,1fr);gap:var(--gap);min-height:0}
+.c-strip{grid-column:1 / 3;grid-row:2}
+.c-log{grid-column:3;grid-row:2}
 
-/* ---------- stat tiles ---------- */
-.tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-.tile{
-  background:rgba(6,23,38,.45);border:1px solid var(--rule);border-radius:5px;padding:13px 14px;
-}
-.tile .k{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--mist);margin-bottom:6px}
-.tile .v{font-family:var(--font-mono);font-weight:500;font-size:23px;line-height:1.1}
-.tile .v small{font-size:12px;color:var(--mist);font-weight:400}
-.tile .sub{font-size:11.5px;color:var(--mist);margin-top:4px}
+/* ---------- map ---------- */
+.map-body{flex:1;min-height:0;position:relative;overflow:hidden;border-radius:3px}
+#map{position:absolute;inset:0}
+.leaflet-container{background:#05182B;font-family:var(--font-body);outline:none}
+.leaflet-tile-pane{filter:saturate(.74) brightness(.84) contrast(1.06)}
+.map-vig{position:absolute;inset:0;pointer-events:none;z-index:420;
+  background:radial-gradient(120% 90% at 50% 50%,transparent 42%,rgba(2,12,23,.66) 100%)}
+.map-cross{position:absolute;inset:0;pointer-events:none;z-index:421;opacity:.45}
+.map-cross i{position:absolute;background:rgba(47,227,190,.2)}
+.map-cross i.h{left:0;right:0;height:1px;top:50%}
+.map-cross i.v{top:0;bottom:0;width:1px;left:50%}
+.offline{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:430;
+  background:rgba(2,12,23,.92);border:1px solid var(--amber);color:var(--amber);
+  font-family:var(--font-mono);font-size:10px;padding:5px 11px;border-radius:3px;display:none}
+.offline.on{display:block}
+.leaflet-control-attribution{background:rgba(2,12,23,.74)!important;color:#5E90BA!important;
+  font-size:8.5px!important;font-family:var(--font-mono)!important}
+.leaflet-control-attribution a{color:#7BA2C2!important}
+.leaflet-control-zoom a{background:rgba(8,33,57,.94)!important;color:#7FE0FF!important;
+  border-color:#144063!important;font-weight:400!important}
+.leaflet-control-zoom a:hover{background:rgba(30,99,148,.95)!important}
+.leaflet-control-scale-line{background:rgba(2,12,23,.68)!important;border-color:#7BA2C2!important;
+  color:#9FD8FF!important;font-family:var(--font-mono)!important;font-size:9px!important}
+/* packets marching along the LoRa links */
+.lora-link{animation:ants 1.5s linear infinite}
+@keyframes ants{to{stroke-dashoffset:-22}}
+
+.mk{position:relative}
+.mk .core,.mk .ring{position:absolute;left:0;top:0;border-radius:50%;transform:translate(-50%,-50%)}
+.mk .core{width:15px;height:15px;border:2.5px solid #020C17;background:currentColor;
+  box-shadow:0 0 14px currentColor,0 0 32px currentColor}
+.mk .ring{width:26px;height:26px;border:1.6px solid currentColor;opacity:0}
+.mk.alert .ring{animation:pulse 1.8s ease-out infinite}
+@keyframes pulse{0%{opacity:.9;width:22px;height:22px}100%{opacity:0;width:78px;height:78px}}
+.mk.active .core{width:19px;height:19px}
+.mk .lab{position:absolute;left:15px;top:-19px;white-space:nowrap;
+  background:rgba(2,12,23,.92);border:1px solid var(--rule-hot);border-radius:3px;
+  padding:3px 8px;line-height:1.25}
+.mk.active .lab{border-color:currentColor;box-shadow:0 0 16px rgba(47,227,190,.18)}
+.mk .lab b{display:block;font-family:var(--font-mono);font-size:8.5px;color:var(--mist);font-weight:400}
+.mk .lab s{display:block;text-decoration:none;font-family:var(--font-display);font-weight:600;
+  font-size:12.5px;color:currentColor;letter-spacing:.03em}
+.gw{position:relative}
+.gw .core{position:absolute;left:0;top:0;transform:translate(-50%,-50%) rotate(45deg);
+  width:13px;height:13px;background:var(--ion);border:2px solid #020C17;box-shadow:0 0 14px var(--ion)}
+.gw .lab{position:absolute;left:13px;top:-9px;white-space:nowrap;font-family:var(--font-mono);
+  font-size:9px;color:var(--ion);background:rgba(2,12,23,.88);padding:2px 6px;border-radius:2px;
+  border:1px solid rgba(57,189,248,.4)}
+.lnk{font-family:var(--font-mono);font-size:8.5px;color:#9FD8FF;background:rgba(2,12,23,.8);
+  padding:1px 5px;border-radius:2px;white-space:nowrap;transform:translate(-50%,-50%)}
+
+/* ---------- drain ---------- */
+.gauge-body{flex:1;min-height:0;display:flex;align-items:center;justify-content:center}
+.gauge-body svg{width:100%;height:100%;display:block}
+.readout{flex:none;display:flex;align-items:flex-end;justify-content:space-between;gap:6px;margin-top:calc(var(--pad)*.4)}
+.readout .big{font-family:var(--font-mono);font-weight:600;font-size:clamp(19px,3.5vh,36px);line-height:1;letter-spacing:-.02em}
+.readout .unit{font-family:var(--font-mono);font-size:clamp(8px,1.15vh,13px);color:var(--mist);margin-left:3px}
+
+/* ---------- tiles ---------- */
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap)}
+.tile{background:rgba(2,12,23,.55);border:1px solid var(--rule);border-radius:4px;
+  padding:calc(var(--pad)*.5) calc(var(--pad)*.62);min-width:0}
+.tile .k{font-size:clamp(6.5px,.9vh,9.5px);letter-spacing:.13em;text-transform:uppercase;
+  color:var(--mist);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .v{font-family:var(--font-mono);font-weight:500;font-size:clamp(11.5px,2vh,21px);line-height:1.08;white-space:nowrap}
+.tile .v small{font-size:clamp(7px,.95vh,11px);color:var(--mist);font-weight:400}
+.tile .sub{font-size:clamp(6.5px,.92vh,10px);color:var(--mist);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .v.good{color:var(--signal)} .v.warn{color:var(--amber)} .v.bad{color:var(--siren)}
 
-/* ---------- clickable tiles and the temperature / humidity trend dialog ---------- */
+/* ---------- chart ---------- */
+.chart-body{flex:1;min-height:0}
+.chart-body svg{width:100%;height:100%;display:block}
+.legend{flex:none;display:flex;gap:clamp(6px,1vw,15px);flex-wrap:nowrap;overflow:hidden;
+  margin-top:calc(var(--pad)*.3);font-size:clamp(6.5px,.94vh,10.5px);color:var(--mist)}
+.legend span{white-space:nowrap}
+.legend i{display:inline-block;width:12px;height:2px;vertical-align:middle;margin-right:5px}
+
+/* ---------- node strip ---------- */
+.strip{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap);flex:1;min-height:0}
+.ncard{position:relative;cursor:pointer;background:rgba(2,12,23,.45);
+  border:1px solid var(--rule);border-radius:4px;padding:calc(var(--pad)*.5) var(--pad);
+  display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;
+  gap:clamp(7px,.9vw,16px);min-width:0;transition:border-color .15s,box-shadow .15s;overflow:hidden}
+.ncard::after{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:currentColor;opacity:.75}
+.ncard:hover{border-color:var(--rule-hot)}
+.ncard.active{border-color:var(--signal);box-shadow:0 0 0 1px rgba(47,227,190,.3),0 0 24px rgba(47,227,190,.12) inset}
+.ncard .nv{font-family:var(--font-mono);font-size:clamp(16px,2.8vh,30px);font-weight:500;line-height:1}
+.ncard .nv small{font-size:clamp(8px,1.1vh,12px);color:var(--mist)}
+.ncard .nn{font-family:var(--font-display);font-weight:600;font-size:clamp(11px,1.65vh,17px);
+  letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--paper)}
+.ncard .nid{font-family:var(--font-mono);font-size:clamp(6.5px,.95vh,9.5px);color:var(--mist);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ncard .spark{width:100%;height:clamp(16px,2.4vh,30px);display:block;margin-top:2px}
+.ncard .nmeta{font-family:var(--font-mono);font-size:clamp(6.5px,.95vh,10px);color:var(--mist);
+  text-align:right;line-height:1.5;white-space:nowrap}
+.ncard .chip{display:inline-block;font-family:var(--font-mono);font-size:clamp(6px,.9vh,9.5px);
+  letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid}
+
+/* ---------- event log ---------- */
+.log{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:2px}
+.logrow{display:grid;grid-template-columns:auto auto 1fr;gap:8px;align-items:baseline;
+  font-family:var(--font-mono);font-size:clamp(7px,1.02vh,10.5px);
+  padding:2px 0;border-bottom:1px solid rgba(20,64,99,.5);white-space:nowrap}
+.logrow time{color:var(--mist)}
+.logrow .who{color:var(--sky)}
+.logrow .what{overflow:hidden;text-overflow:ellipsis}
+.logempty{font-family:var(--font-mono);font-size:clamp(7px,1.02vh,10.5px);color:var(--mist);opacity:.7}
+
+/* ---------- toast ---------- */
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--hull);border:1px solid var(--signal);border-radius:4px;padding:9px 16px;
+  font-family:var(--font-mono);font-size:12px;color:var(--sky);
+  box-shadow:0 0 30px rgba(47,227,190,.25);opacity:0;pointer-events:none;
+  transition:opacity .25s,transform .25s;z-index:900}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+@media (max-height:600px),(max-width:1000px){
+  html,body{height:auto;overflow:auto}
+  .shell{height:auto}
+  .main{grid-template-columns:1fr;grid-template-rows:none}
+  .c-map,.c-drain,.c-right,.c-strip,.c-log{grid-column:1;grid-row:auto}
+  .map-body{height:54vh} .gauge-body{height:40vh} .chart-body{height:34vh}
+  .strip{grid-template-columns:1fr}
+  .legend{flex-wrap:wrap}
+}
+
+.alerts{display:flex;flex-direction:column;gap:var(--gap);min-height:0}
+.ncard .nv{font-size:clamp(14px,2.4vh,26px)}
+.ncard .nmeta{font-size:clamp(6px,.85vh,9px);line-height:1.45}
+.ncard{gap:clamp(5px,.6vw,12px)}
+.banner.off{display:none}
+.banner.link{display:none;border-left-color:var(--mist);background:linear-gradient(90deg,rgba(127,166,198,.18),rgba(127,166,198,.02))}
+.banner.link.on{display:flex}
+.banner.link .tag{color:var(--mist)}
+.homelink{font-family:var(--font-mono);font-size:clamp(7px,.95vh,10px);letter-spacing:.12em;text-transform:uppercase;color:var(--mist);text-decoration:none;border:1px solid var(--rule);border-radius:999px;padding:4px 10px;white-space:nowrap}
+.homelink:hover,.homelink:focus-visible{color:var(--paper);border-color:var(--signal)}
+.site{font-family:var(--font-mono);font-size:clamp(8px,1.15vh,12px);color:var(--mist);max-width:28ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mark{align-items:center}
+.mark .logo{border-radius:20%}
+.tiles{grid-template-columns:repeat(3,1fr)}
 .tile.btn{cursor:pointer}
 .tile.btn:hover,.tile.btn:focus-visible{border-color:var(--signal);outline:none}
 .tile.btn .k::after{content:" \203A";color:var(--signal)}
-dialog.trend{
-  background:linear-gradient(180deg,var(--hull),var(--panel));color:var(--paper);
+.tile.btn.stale,.tiles.stale .tile:not(.btn),.ncard.stale{opacity:.5}
+.readout .note{font-size:clamp(8px,1.1vh,11.5px);color:var(--mist)}
+.health{font-family:var(--font-mono);font-size:clamp(7px,1.02vh,10.5px);color:var(--amber);margin-top:4px}
+dialog.trend{background:linear-gradient(180deg,var(--hull),var(--panel));color:var(--paper);
   border:1px solid var(--rule);border-radius:6px;padding:16px;
-  width:min(920px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;
-}
+  width:min(920px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto}
 dialog.trend::backdrop{background:rgba(3,10,18,.7)}
 .trend .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:12px}
-.trend .bar h2{margin:0}
+.trend .bar h2{margin:0;font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--mist)}
 .trend .seg{display:flex}
-.trend .seg button,.trend .close{
-  font-family:var(--font-mono);font-size:12px;padding:7px 12px;cursor:pointer;
-  background:rgba(6,23,38,.45);color:var(--mist);border:1px solid var(--rule);
-}
+.trend .seg button,.trend .close{font-family:var(--font-mono);font-size:12px;padding:7px 12px;cursor:pointer;
+  background:rgba(2,12,23,.45);color:var(--mist);border:1px solid var(--rule)}
 .trend .seg button[aria-pressed=true]{color:var(--abyss);background:var(--signal);border-color:var(--signal)}
 .trend .seg button:focus-visible,.trend .close:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
 .trend svg{width:100%;height:auto;display:block;touch-action:pan-y}
 .trend .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:12px}
-
-/* ---------- chart ---------- */
-.chart svg{width:100%;height:auto;display:block}
-.legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:11.5px;color:var(--mist)}
-.legend i{display:inline-block;width:16px;height:2px;vertical-align:middle;margin-right:6px}
-
-/* ---------- node table ---------- */
-table{width:100%;border-collapse:collapse;font-size:13px}
-thead th{
-  text-align:left;font-family:var(--font-display);font-weight:600;font-size:10.5px;
-  letter-spacing:.16em;text-transform:uppercase;color:var(--mist);
-  padding:0 10px 9px;border-bottom:1px solid var(--rule);
-}
-tbody td{padding:11px 10px;border-bottom:1px solid rgba(27,75,114,.45)}
-tbody tr{cursor:pointer}
-tbody tr:hover{background:rgba(47,227,190,.05)}
-tbody tr.active{background:rgba(47,227,190,.09)}
-tbody tr.active td:first-child{box-shadow:inset 3px 0 0 var(--signal)}
-td.num{font-family:var(--font-mono)}
-.node-id{font-family:var(--font-mono);font-size:12px;color:var(--mist)}
-.node-name{font-weight:500}
-.chip{
-  display:inline-block;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.10em;
-  text-transform:uppercase;padding:3px 8px;border-radius:3px;border:1px solid;
-}
-.chip.normal{color:var(--signal);border-color:rgba(47,227,190,.4);background:rgba(47,227,190,.08)}
-.chip.watch{color:#9FD8FF;border-color:rgba(159,216,255,.4);background:rgba(159,216,255,.08)}
-.chip.warning{color:var(--amber);border-color:rgba(255,176,32,.4);background:rgba(255,176,32,.08)}
-.chip.danger{color:var(--siren);border-color:rgba(255,90,71,.45);background:rgba(255,90,71,.10)}
-.chip.fault,.chip.stale,.chip.nodata{color:var(--mist);border-color:rgba(127,166,198,.4);background:rgba(127,166,198,.08)}
-.chip.fault{border-style:dashed}
-.chip.nodata{opacity:.7}
-tr.stale{opacity:.5}
-.tiles.stale .tile:not(.btn){opacity:.5}
-.tile.btn.stale{opacity:.5}
-.readout .note{font-size:11.5px;color:var(--mist);margin-top:6px}
-
-/* ---------- node map ---------- */
-#map{height:340px;border-radius:4px;border:1px solid var(--rule);background:var(--hull);color:var(--mist);font-size:13px}
-.card .hint{font-size:11.5px;color:var(--mist);margin-top:10px}
-
-/* ---------- footer ---------- */
-.foot{
-  display:flex;gap:14px;align-items:center;flex-wrap:wrap;
-  border-top:1px solid var(--rule);padding-top:12px;
-  font-size:11.5px;color:var(--mist);
-}
-.foot code{font-family:var(--font-mono);color:var(--paper);background:rgba(6,23,38,.6);padding:2px 6px;border-radius:3px}
-
-@media (max-width:820px){
-  body{padding:12px}
-  .row{grid-template-columns:1fr}
-  .tiles{grid-template-columns:repeat(2,1fr)}
-  .mark b{font-size:24px}
-  table{font-size:12px}
-  .hide-sm{display:none}
-  .trend .stats{grid-template-columns:repeat(2,1fr)}
-}
-@media (prefers-reduced-motion:reduce){
-  *{animation:none!important;transition:none!important}
-}
+.trend .stats .tile .v{font-size:20px}
+.trend .hint{font-size:11.5px;color:var(--mist);margin-top:10px}
+@media (max-width:1000px){.trend .stats{grid-template-columns:repeat(2,1fr)}.tiles{grid-template-columns:repeat(2,1fr)}.strip{grid-template-columns:1fr!important}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="shell">
 
   <header class="topbar">
     <div class="mark">
+      <img src="/logo.png" alt="" class="logo" width="42" height="42">
       <b>J.A.G.A</b>
-      <span>Jaringan Amaran Geo-Spatial & AI &middot; Monitoring System</span>
+      <span>Jaringan Amaran Geo-Spatial &amp; AI</span>
     </div>
     <span class="site" id="siteName"></span>
     <div class="spacer"></div>
     <a class="homelink" href="/">Home</a>
     <a class="homelink" href="/dashboard">All servers</a>
+    <div class="exports">
+      <button class="btn" id="btnCsvAll">CSV · all</button>
+      <button class="btn" id="btnCsvOne">CSV · node</button>
+      <button class="btn" id="btnJson">JSON</button>
+    </div>
     <div class="clock" id="clock">--:--:--</div>
     <div class="livepill"><i class="dot"></i><span id="modeLabel">Simulated feed</span></div>
   </header>
 
-  <div class="banner link" id="linkBanner">
-    <div class="tag">Link</div>
-    <div class="msg" id="linkMsg"></div>
-  </div>
+  <div class="alerts">
+  <div class="banner link" id="linkBanner"><div class="tag">Link</div><div class="msg" id="linkMsg"></div></div>
 
   <div class="banner" id="banner">
-    <div class="tag" id="bannerTag">Warning</div>
-    <div class="msg" id="bannerMsg"></div>
+    <div class="tag" id="bannerTag">Normal</div>
+    <div class="msg" id="bannerMsg">All nodes within safe limits.</div>
+    <div class="lead">Lead time<b id="bannerLead">&mdash;</b></div>
+  </div>
   </div>
 
-  <div class="row">
+  <div class="main">
 
-    <!-- SIGNATURE: drain cross-section -->
-    <section class="card gauge">
-      <h2>Drain cross-section</h2>
-      <svg viewBox="0 0 300 250" role="img" aria-label="Live water level in the monitored drain">
-        <defs>
-          <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%"  stop-color="#3FA9F5" stop-opacity=".85"/>
-            <stop offset="100%" stop-color="#1B4B72" stop-opacity=".95"/>
-          </linearGradient>
-        </defs>
+    <section class="card c-map">
+      <h2>Sensor network
+        <span class="hint" id="linkHint">&mdash;</span>
+        <button class="btn on" id="btnSat">Satellite</button>
+        <button class="btn" id="btnDark">Dark</button>
+        <button class="btn" id="btnStreet">Streets</button>
+      </h2>
+      <div class="map-body">
+        <div id="map"></div>
+        <div class="map-vig"></div>
+        <div class="map-cross"><i class="h"></i><i class="v"></i></div>
+        <div class="offline" id="offline">Basemap offline &mdash; telemetry still live</div>
+      </div>
+    </section>
 
-        <!-- concrete walls -->
-        <path d="M64 30 L64 210 L236 210 L236 30" fill="none" stroke="#1B4B72" stroke-width="9" stroke-linejoin="miter"/>
-        <path d="M64 30 L64 210 L236 210 L236 30" fill="none" stroke="#2A5D89" stroke-width="1"/>
-
-        <!-- water -->
-        <clipPath id="bore"><rect x="69" y="34" width="162" height="172"/></clipPath>
-        <g clip-path="url(#bore)">
-          <path id="waterBody" d="" fill="url(#water)"/>
-          <path id="waterLine" d="" fill="none" stroke="#7FE0FF" stroke-width="1.6"/>
-        </g>
-
-        <!-- sensor head -->
-        <rect x="132" y="8" width="36" height="20" rx="3" fill="#0C2941" stroke="#2FE3BE" stroke-width="1.2"/>
-        <text x="150" y="22" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8" fill="#2FE3BE">SR04</text>
-
-        <!-- measuring beam -->
-        <line id="beam" x1="150" y1="28" x2="150" y2="200" stroke="#2FE3BE" stroke-width="1" stroke-dasharray="3 4" opacity=".8"/>
-        <text id="beamLabel" x="157" y="60" font-family="IBM Plex Mono,monospace" font-size="10" fill="#2FE3BE">— m</text>
-
-        <!-- threshold ticks on left wall -->
-        <g font-family="IBM Plex Mono,monospace" font-size="8.5" fill="#7FA6C6">
-          <line id="tW" x1="46" y1="0" x2="60" y2="0" stroke="#FFB020" stroke-width="1.2"/>
-          <text id="tWt" x="42" y="0" text-anchor="end" fill="#FFB020">0.70</text>
-          <line id="tD" x1="46" y1="0" x2="60" y2="0" stroke="#FF5A47" stroke-width="1.2"/>
-          <text id="tDt" x="42" y="0" text-anchor="end" fill="#FF5A47">0.90</text>
-        </g>
-
-        <!-- floor -->
-        <text x="150" y="228" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#4E7EA5">DRAIN FLOOR &middot; 0.00 m</text>
-        <text x="150" y="242" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#4E7EA5">DEPTH 1.20 m &middot; SENSOR @ 1.45 m</text>
-      </svg>
-
+    <section class="card c-drain">
+      <h2>Section</h2>
+      <div class="gauge-body">
+        <svg id="drain" viewBox="0 0 240 400" preserveAspectRatio="xMidYMid meet"
+             role="img" aria-label="Live water level at the selected node"></svg>
+      </div>
       <div class="readout">
-        <div>
-          <span class="big" id="levelBig">0.00</span><span class="unit">m</span>
-          <div class="note" id="levelNote"></div>
-        </div>
-        <div class="where">
-          <b id="nodeName">—</b>
-          <span id="nodeMeta">—</span>
-        </div>
+        <div><span class="big" id="levelBig">0.00</span><span class="unit">m</span><div class="note" id="levelNote"></div></div>
       </div>
     </section>
 
-    <!-- stat tiles -->
-    <section class="card">
-      <h2>Station telemetry</h2>
-      <div class="tiles" id="tiles">
-        <div class="tile">
-          <div class="k">Rate of rise</div>
-          <div class="v" id="rateV">0.00 <small>m/h</small></div>
-          <div class="sub" id="rateSub">Over last 15 min</div>
+    <div class="c-right">
+      <section class="card">
+        <h2>Telemetry <span class="hint" id="tileNode">&mdash;</span></h2>
+        <div class="tiles" id="tiles">
+          <div class="tile"><div class="k">Rate of rise</div><div class="v" id="rateV">0.00 <small>m/h</small></div><div class="sub">Last 15 min</div></div>
+          <div class="tile"><div class="k">In 60 min</div><div class="v" id="fcV">0.00 <small>m</small></div><div class="sub" id="fcSub">&mdash;</div></div>
+          <div class="tile"><div class="k">Lead time</div><div class="v" id="leadV">&mdash;</div><div class="sub" id="leadSub">To danger level</div></div>
+          <div class="tile"><div class="k">Rainfall</div><div class="v" id="rainV">0.0 <small>mm/h</small></div><div class="sub" id="rainSub">&mdash;</div></div>
+          <div class="tile"><div class="k">Battery</div><div class="v" id="battV">0.00 <small>V</small></div><div class="sub" id="battSub">&mdash;</div></div>
+          <div class="tile"><div class="k">Radio link</div><div class="v" id="rssiV">-000 <small>dBm</small></div><div class="sub" id="rssiSub">&mdash;</div></div>
+          <div class="tile"><div class="k">Last packet</div><div class="v" id="seenV">&mdash;</div><div class="sub">Uplink about every 60 s</div></div>
+          <div class="tile btn" id="tile_temp" role="button" tabindex="0" aria-label="Temperature, open the trend"><div class="k">Temperature</div><div class="v" id="v_temp">&mdash; <small>&deg;C</small></div><div class="sub" id="sub_temp">&mdash;</div></div>
+          <div class="tile btn" id="tile_hum" role="button" tabindex="0" aria-label="Humidity, open the trend"><div class="k">Humidity</div><div class="v" id="v_hum">&mdash; <small>%</small></div><div class="sub" id="sub_hum">&mdash;</div></div>
         </div>
-        <div class="tile">
-          <div class="k">Projected in 60 min</div>
-          <div class="v" id="fcV">0.00 <small>m</small></div>
-          <div class="sub" id="fcSub">Linear trend</div>
+      </section>
+
+      <section class="card">
+        <h2>Hydrograph <span class="hint">90 min history &middot; 60 min forecast</span></h2>
+        <div class="chart-body" id="chartBox"><svg id="chart" role="img" aria-label="Rainfall and water level history with forecast"></svg></div>
+        <div class="legend">
+          <span><i style="background:#2FE3BE"></i>Level</span>
+          <span><i style="background:rgba(57,189,248,.55);height:7px"></i>Rainfall</span>
+          <span><i style="background:#7FE0FF"></i>Forecast</span>
+          <span><i style="background:#FFB020"></i>Warn 0.70</span>
+          <span><i style="background:#FF5A47"></i>Danger 0.90</span>
         </div>
-        <div class="tile">
-          <div class="k">Rainfall</div>
-          <div class="v" id="rainV">0.0 <small>mm/h</small></div>
-          <div class="sub" id="rainSub">Tipping bucket</div>
-        </div>
-        <div class="tile">
-          <div class="k">Battery</div>
-          <div class="v" id="battV">0.00 <small>V</small></div>
-          <div class="sub" id="battSub">Solar charging</div>
-        </div>
-        <div class="tile">
-          <div class="k">Radio link</div>
-          <div class="v" id="rssiV">-000 <small>dBm</small></div>
-          <div class="sub" id="rssiSub">SNR — dB</div>
-        </div>
-        <div class="tile">
-          <div class="k">Last packet</div>
-          <div class="v" id="seenV">0 <small>s ago</small></div>
-          <div class="sub" id="seenSub">Uplink about every 60 s</div>
-        </div>
-        <div class="tile btn" id="tile_temp" role="button" tabindex="0" aria-label="Temperature, open the trend">
-          <div class="k">Temperature</div>
-          <div class="v" id="v_temp">&mdash; <small>&deg;C</small></div>
-          <div class="sub" id="sub_temp">Click for trend</div>
-        </div>
-        <div class="tile btn" id="tile_hum" role="button" tabindex="0" aria-label="Humidity, open the trend">
-          <div class="k">Humidity</div>
-          <div class="v" id="v_hum">&mdash; <small>%</small></div>
-          <div class="sub" id="sub_hum">Click for trend</div>
-        </div>
-      </div>
+      </section>
+    </div>
+
+    <section class="card c-strip">
+      <h2>Nodes <span class="hint">click to inspect</span></h2>
+      <div class="strip" id="strip"></div>
+    </section>
+
+    <section class="card c-log">
+      <h2>Event log <span class="hint" id="logCount">0 rows held</span></h2>
+      <div class="log" id="log"></div>
+      <div class="health" id="healthNote"></div>
     </section>
   </div>
-
-  <!-- chart -->
-  <section class="card chart">
-    <h2>Water level &mdash; 90 min history, 60 min forecast</h2>
-    <svg id="chart" viewBox="0 0 900 280" role="img" aria-label="Water level history and forecast"></svg>
-    <div class="legend">
-      <span><i style="background:#2FE3BE"></i>Measured level</span>
-      <span><i style="background:#7FE0FF;border-top:2px dashed #7FE0FF;height:0"></i>Forecast (rate-of-rise)</span>
-      <span><i style="background:rgba(127,224,255,.18);height:8px"></i>Forecast uncertainty</span>
-      <span><i style="background:#FFB020"></i>Warning 0.70 m</span>
-      <span><i style="background:#FF5A47"></i>Danger 0.90 m</span>
-    </div>
-  </section>
-
-  <!-- node map -->
-  <section class="card">
-    <h2>Node placement</h2>
-    <div id="map" role="img" aria-label="Map of the sensor nodes near UTHM Parit Raja"></div>
-    <div class="hint">Drag a pin to move a node (saved on the server). Ring colour = status; bold blue = OpenStreetMap rivers and canals.</div>
-    <div class="hint" id="pinNote" style="color:var(--amber)"></div>
-  </section>
-
-  <!-- node table -->
-  <section class="card">
-    <h2>Sensor network &mdash; 5 nodes</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Node</th>
-          <th>Location</th>
-          <th>Level</th>
-          <th>Rate</th>
-          <th class="hide-sm">Rain</th>
-          <th class="hide-sm">Battery</th>
-          <th class="hide-sm">Link</th>
-          <th class="hide-sm">Temp</th>
-          <th class="hide-sm">Humidity</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody id="nodeRows"></tbody>
-    </table>
-  </section>
-
-  <footer class="foot">
-    <span>Data source: <code id="srcCode">api</code></span>
-    <span>Add <code>?sim</code> to the address for the simulated storm. Rain, battery and RSSI show &mdash; until those sensors exist.</span>
-    <span id="healthNote"></span>
-    <span>Map data &copy; OpenStreetMap contributors.</span>
-  </footer>
 </div>
 
 <dialog class="trend" id="trend" aria-labelledby="trendTitle">
-  <div class="bar">
-    <h2 id="trendTitle"></h2>
-    <button class="close" id="trendClose" type="button">Close</button>
-  </div>
+  <div class="bar"><h2 id="trendTitle"></h2><button class="close" id="trendClose" type="button">Close</button></div>
   <div class="bar">
     <div class="seg" id="metricSeg" role="group" aria-label="Measurement">
       <button type="button" data-m="temp">Temperature</button>
@@ -417,68 +402,47 @@ tr.stale{opacity:.5}
   <div class="hint" id="trendNote" style="color:var(--amber)"></div>
 </dialog>
 
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="/river.js"></script>
 <script>
 /* =========================================================================
-   1. CONFIG — physical setup of your prototype. Change these to match
-      whatever you actually build.
+   1. CONFIG
    ========================================================================= */
 const CFG = {
-  drainDepth:    1.20,   // metres, floor to top of drain wall
-  sensorHeight:  1.45,   // metres, floor to sensor face
-  thrWatch:      0.45,
-  thrWarning:    0.70,
-  thrDanger:     0.90,
-  rateWatch:     0.20,   // m/h — climbing this fast bumps severity up one step
-  rateWarning:   0.40,
-  recession:     0.35,   // when falling, a drain retains ~35% of its head per hour
-  baseFlow:      0.06,   // m — drains never fully empty; there is always base flow
-  historyMin:    90,     // minutes of history kept on chart
-  forecastMin:   60,     // minutes projected forward
-  tickMs:        1500    // one simulated minute every 1.5 s
+  drainDepth:1.20, sensorHeight:1.45,
+  thrWatch:0.45, thrWarning:0.70, thrDanger:0.90,
+  rateWatch:0.20, rateWarning:0.40,
+  recession:0.35, baseFlow:0.06,
+  historyMin:90, forecastMin:60, tickMs:1500,
+  alertRadius:140,        // m, flood-risk radius drawn around each node
+  rainScaleMax:80,        // mm/h, full height of the rainfall bars
+  cartoKey:'cb1_3yw9_1_4a2952f7f10eb94c80c28e0f'
 };
 
+// Placeholder positions; the ones saved on the server (/api/nodes) replace them.
 const NODES = [
-  { id:'JAGA-01', name:'Tasik G3',       area:'UTHM',   seed:0.00, lat:1.8630, lng:103.0840 },
-  { id:'JAGA-02', name:'Infront FKAAB',  area:'UTHM',           seed:0.55, lat:1.8640, lng:103.0850 },
-  { id:'JAGA-03', name:'Infront FSKTM',  area:'UTHM',seed:1.20, lat:1.8650, lng:103.0860 },
-  { id:'JAGA-04', name:'Infront FPTP',   area:'UTHM',seed:1.90, lat:1.8660, lng:103.0870 },
-  { id:'JAGA-05', name:'Infront FKEE ',  area:'UTHM',   seed:2.60, lat:1.8670, lng:103.0880 }
+  { id:'JAGA-01', name:'Tasik G3',      area:'UTHM', seed:0.00, lat:1.8630, lng:103.0840 },
+  { id:'JAGA-02', name:'Infront FKAAB', area:'UTHM', seed:0.55, lat:1.8640, lng:103.0850 },
+  { id:'JAGA-03', name:'Infront FSKTM', area:'UTHM', seed:1.20, lat:1.8650, lng:103.0860 },
+  { id:'JAGA-04', name:'Infront FPTP',  area:'UTHM', seed:1.90, lat:1.8660, lng:103.0870 },
+  { id:'JAGA-05', name:'Infront FKEE',  area:'UTHM', seed:2.60, lat:1.8670, lng:103.0880 }
 ];
+document.getElementById('strip').style.gridTemplateColumns = `repeat(${NODES.length},minmax(0,1fr))`;
 
 /* =========================================================================
-   2. DATA SOURCE
-      'simulate' generates a realistic storm so you can demo today.
-      'supabase' reads real rows once your ESP32 is posting.
+   2. DATA SOURCE: our nginx/Python server; add ?sim to the address for the simulator.
+      The hub serves a site's dashboard at /server/<slug> and its API under the same prefix.
    ========================================================================= */
-// 'api' = our nginx/Python server (or the master directly); add ?sim to the URL for the simulator.
-// The hub serves a site's dashboard at /server/<slug> and its API under the same prefix.
 const PAGE_SLUG = (location.pathname.match(/^\/server\/([a-z0-9][a-z0-9-]{1,38}[a-z0-9])\/?$/) || [])[1];
 const API = /^https?:/.test(location.protocol)
   ? location.origin + (PAGE_SLUG ? '/server/' + PAGE_SLUG : '')
   : 'http://jaga-master.local';
 const SONAR_ERR = -2147483648;                       // INT32_MIN from the firmware
 const nodeNum = id => +id.slice(-2);                 // 'JAGA-03' -> 3
-const SOURCE = {
-  mode: new URLSearchParams(location.search).has('sim') ? 'simulate' : 'api',
-
-  // ---- fill these in later, when hardware is live ----
-  supabaseUrl:  'https://qtrvxiplybsctsqabeul.supabase.co',
-  supabaseKey:  'sb_publishable_0uTOH2YcyUf5XQS0m2fNhQ_dzaOazTK',
-
-  async fetchLatest(){
-    // ==== SWAP TO LIVE DATA HERE ====
-    // Expects a table `readings` with columns:
-    //   device_id text, ts timestamptz, level_m float8,
-    //   rain_mm_h float8, battery_v float8, rssi int4, snr float4
-    const url = `${this.supabaseUrl}/rest/v1/readings`
-              + `?select=*&order=ts.desc&limit=300`;
-    const r = await fetch(url, {
-      headers:{ apikey:this.supabaseKey, Authorization:`Bearer ${this.supabaseKey}` }
-    });
-    if(!r.ok) throw new Error('Supabase '+r.status);
-    return await r.json();
-  }
-};
+const SOURCE = { mode: new URLSearchParams(location.search).has('sim') ? 'simulate' : 'api' };
+const $ = id => document.getElementById(id);
 
 async function getJSON(path){
   const ctl = new AbortController();
@@ -496,7 +460,6 @@ async function getJSON(path){
     throw e;
   } finally { clearTimeout(timer); }
 }
-
 // History for one node: must be an array of rows with finite numbers; bad rows are dropped.
 // An array where every row is bad counts as a failed request (an empty array is just no data).
 const okRow = r => r && Number.isFinite(r.water_level_mm) && Number.isFinite(r.log_timestamp_s)
@@ -508,7 +471,6 @@ async function getHistory(path){
   if(rows.length && !ok.length) throw Object.assign(new Error(path + ': rows have no water level'), { bad:true });
   return ok;
 }
-
 // Rows are newest-first per node; failed sonar reads are dropped. Rain, battery and RSSI
 // have no sensor yet, so they stay null and the UI shows a dash.
 async function fetchApi(){
@@ -540,13 +502,13 @@ async function fetchApi(){
 }
 
 /* =========================================================================
-   3. SIMULATOR — a convective storm passing over the network
+   3. SIMULATOR
    ========================================================================= */
 let pollErr = '';                        // text of what failed in the last poll
 let apiStatus = null;                    // last /api/status reply (api mode)
-let simMin = 0;                       // simulated minutes elapsed
-const store = {};                     // id -> [{t, level, rain, batt, rssi, snr}]
-const meta = {};                      // id -> newest raw row {fault, rx} (api mode), null = no rows
+let simMin = 0;
+const store = {};                        // id -> [{t, rx, level, rain, batt, rssi, snr, temp, hum}]
+const meta = {};                         // id -> newest raw row {fault, rx} (api mode), null = no rows
 NODES.forEach(n => store[n.id] = []);
 
 function stormCurve(t, seed){
@@ -585,7 +547,7 @@ function simStep(){
 }
 
 /* =========================================================================
-   4. ANALYTICS — rate of rise, forecast, severity
+   4. ANALYTICS
    ========================================================================= */
 function rateOfRise(buf, windowMin = 15){
   if(buf.length < 2) return 0;
@@ -618,7 +580,11 @@ function severity(level, rate){
   if(rate > 0 && level + rate >= CFG.thrDanger) s = Math.max(s, 2);
   return s;
 }
-
+function leadTime(level, rate){
+  if(rate <= 0 || level >= CFG.thrDanger) return null;
+  const m = ((CFG.thrDanger - level)/rate)*60;
+  return (m > 0 && m <= 240) ? Math.round(m) : null;
+}
 const STALE_S = 180;                 // section 7 of docs/ERROR_HANDLING.md
 
 // Seconds since the newest packet. Server-clock rows use the browser clock; master-clock rows (no
@@ -645,19 +611,10 @@ const CHIP = { fault:['fault','Sensor fault'], nosignal:['stale','No signal'], n
 
 const SEV = ['normal','watch','warning','danger'];
 const SEVLABEL = ['Normal','Watch','Warning','Danger'];
+const SEVCOL   = ['#2FE3BE','#9FD8FF','#FFB020','#FF5A47','#7FA6C6'];   // 4 = no trustworthy level
 
-/* =========================================================================
-   5. RENDER
-   ========================================================================= */
+/* temperature and humidity, trend dialog */
 let activeId = NODES[0].id;
-
-const $ = id => document.getElementById(id);
-
-function fmtClock(){
-  const d = new Date();
-  return d.toTimeString().slice(0,8);
-}
-
 /* ---------- temperature and humidity ----------
    Kept from every row, even when the sonar failed: the master's own node has a DHT22 but may have no sonar. */
 const METRIC = {
@@ -684,11 +641,10 @@ function drawEnv(n){
     $('v_'+m).innerHTML = `${last ? last[m].toFixed(M.dec) : '&mdash;'} <small>${M.unit}</small>`;
     const day = last ? vals.filter(r => r.ts >= last.ts - 86400).map(r => r[m]) : [];
     $('sub_'+m).textContent = last
-      ? `${Math.min(...day).toFixed(M.dec)}–${Math.max(...day).toFixed(M.dec)} ${M.unit} over 24 h · click for trend`
-      : 'No reading yet · click for trend';
+      ? `${Math.min(...day).toFixed(M.dec)}–${Math.max(...day).toFixed(M.dec)} · 24 h trend`
+      : 'No reading yet';
   }
 }
-
 /* ---------- trend dialog: opened from the temperature or humidity tile ---------- */
 let trendMetric = 'temp', trendHours = 24, trendNodeId = null, trendRows = [], trendShown = null, trendTimer = null;
 const trendDlg = $('trend');
@@ -805,147 +761,314 @@ $('trendClose').onclick = () => trendDlg.close();
 trendDlg.addEventListener('click', e => { if(e.target === trendDlg) trendDlg.close(); });   // click on the backdrop
 trendDlg.addEventListener('close', () => clearInterval(trendTimer));
 
-function yFromLevel(level){
-  // drain graphic: floor y=206, rim y=34  → 1.20 m spans 172 px
-  return 206 - (level / CFG.drainDepth) * 172;
-}
+/* =========================================================================
+   5. MAP: real tiles, OpenStreetMap rivers, draggable node pins
+   ========================================================================= */
+let map, layers = {}, fitKey = '';
+const markers = {}, rings = {};
+const posKey = () => NODES.map(n => n.lat + ',' + n.lng).join(';');
+const fitMap = () => { map.fitBounds(L.latLngBounds(NODES.map(n => [n.lat, n.lng])), { padding:[64,64], maxZoom:18 }); fitKey = posKey(); };
 
-function drawDrain(level){
-  const y = yFromLevel(level);
-  const amp = 2.2, w = 162;
-  const phase = Date.now()/900;
-  let d = `M69 ${y}`;
-  for(let x=0; x<=w; x+=9){
-    d += ` Q ${69+x+4.5} ${y + Math.sin((x/22)+phase)*amp}, ${69+x+9} ${y}`;
+async function savePos(n, prev){
+  try {
+    const r = await fetch(`${API}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat:n.lat, lng:n.lng }) });
+    if(!r.ok) throw new Error(r.status);
+  } catch(e){
+    n.lat = prev.lat; n.lng = prev.lng;          // put the pin back
+    markers[n.id].setLatLng([prev.lat, prev.lng]); rings[n.id].setLatLng([prev.lat, prev.lng]);
+    toast("Couldn't save the position. Nothing changed.");
   }
-  $('waterLine').setAttribute('d', d);
-  $('waterBody').setAttribute('d', d + ` L231 206 L69 206 Z`);
-
-  $('beam').setAttribute('y2', y);
-  $('beamLabel').setAttribute('y', (28 + y)/2);
-  $('beamLabel').textContent = (CFG.sensorHeight - level).toFixed(2) + ' m';
-
-  const yw = yFromLevel(CFG.thrWarning), yd = yFromLevel(CFG.thrDanger);
-  $('tW').setAttribute('y1', yw); $('tW').setAttribute('y2', yw); $('tWt').setAttribute('y', yw+3);
-  $('tD').setAttribute('y1', yd); $('tD').setAttribute('y2', yd); $('tDt').setAttribute('y', yd+3);
 }
 
-function drawChart(buf){
-  const W=900,H=280, L=54,R=880,T=18,B=232;
-  const past=CFG.historyMin, fut=CFG.forecastMin, span=past+fut;
-  const yMax = CFG.drainDepth;
-  const X = m => L + ((m + past) / span) * (R-L);     // m in [-past, +fut]
-  const Y = v => B - (v / yMax) * (B-T);
+function initMap(){
+  map = L.map('map', { zoomControl:true, attributionControl:true, zoomSnap:0.25, scrollWheelZoom:false });
+  L.control.scale({ imperial:false, position:'bottomleft' }).addTo(map);
 
-  const now = buf.length ? buf[buf.length-1] : {t:0, level:0};
+  layers.sat = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, attribution:'Imagery © Esri, Maxar, Earthstar Geographics' });
+  layers.dark = L.tileLayer(
+    `https://basemaps.cartocdn.com/rastertiles/dark_matter/{z}/{x}/{y}.png?key=${CFG.cartoKey}`,
+    { maxZoom:20, attribution:'© OpenStreetMap contributors © CARTO' });
+  layers.street = L.tileLayer(
+    `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CFG.cartoKey}`,
+    { maxZoom:20, attribution:'© OpenStreetMap contributors © CARTO' });
+  layers.sat.addTo(map);
+  Object.values(layers).forEach(l => {
+    l.on('tileerror', () => $('offline').classList.add('on'));
+    l.on('tileload', () => $('offline').classList.remove('on'));
+  });
+
+  (window.RIVERS || []).forEach(w =>
+    L.polyline(w.p, { color:'#39BDF8', weight:3, opacity:.8 }).bindTooltip(w.n || w.w).addTo(map));
+
+  NODES.forEach(n => {
+    rings[n.id] = L.circle([n.lat,n.lng], {
+      radius:CFG.alertRadius, color:'#2FE3BE', weight:1,
+      opacity:.45, fillColor:'#2FE3BE', fillOpacity:.05 }).addTo(map);
+    const mk = markers[n.id] = L.marker([n.lat,n.lng], { draggable:true,
+      icon:L.divIcon({ className:'', iconSize:[0,0], html:'<div class="mk"></div>' }) }).addTo(map);
+    mk.on('click', () => { activeId = n.id; render(); });
+    let prev;
+    mk.on('dragstart', () => { prev = { lat:n.lat, lng:n.lng }; });
+    mk.on('drag', () => rings[n.id].setLatLng(mk.getLatLng()));
+    mk.on('dragend', () => {
+      const ll = mk.getLatLng();
+      n.lat = ll.lat; n.lng = ll.lng;
+      fitKey = posKey();                         // don't re-zoom under the user's hand
+      savePos(n, prev);
+    });
+  });
+  fitMap();
+  $('linkHint').textContent = `${NODES.length} nodes · drag a pin to move it`;
+
+  const pick = (key, btn) => {
+    Object.values(layers).forEach(l => map.removeLayer(l));
+    layers[key].addTo(map);
+    ['btnSat','btnDark','btnStreet'].forEach(id => $(id).classList.toggle('on', id === btn));
+  };
+  $('btnSat').onclick    = () => pick('sat','btnSat');
+  $('btnDark').onclick   = () => pick('dark','btnDark');
+  $('btnStreet').onclick = () => pick('street','btnStreet');
+}
+
+function updateMarkers(){
+  NODES.forEach(n => {
+    const mk = markers[n.id];
+    if(mk.dragging._draggable._moving) return;
+    const i = nodeInfo(n), p = i.p;
+    const sev = i.st === 'live' ? i.sev : 4, col = SEVCOL[sev];
+    const el = mk.getElement();
+    if(!el || !el.firstElementChild) return;
+    const m = el.firstElementChild;
+    m.className = 'mk' + (sev >= 2 && sev < 4 ? ' alert' : '') + (n.id === activeId ? ' active' : '');
+    m.style.color = col;
+    m.innerHTML = `<i class="ring"></i><i class="core"></i>
+      <div class="lab"><b>${n.id}</b><s>${n.name} · ${p && i.st !== 'fault' ? p.level.toFixed(2) + ' m' : 'no level'}</s></div>`;
+    rings[n.id].setStyle({ color:col, fillColor:col,
+      fillOpacity: sev >= 2 && sev < 4 ? .14 : .05, opacity: sev >= 2 && sev < 4 ? .8 : .4 });
+  });
+}
+
+// saved positions override the placeholders above
+async function loadPositions(){
+  try {
+    (await getJSON('/api/nodes')).forEach(j => {
+      const n = NODES[j.node_id - 1];
+      if(n && j.lat != null && j.lng != null){
+        n.lat = j.lat; n.lng = j.lng;
+        markers[n.id].setLatLng([n.lat, n.lng]); rings[n.id].setLatLng([n.lat, n.lng]);
+      }
+    });
+  } catch(e){ /* keep placeholders */ }
+  fitMap();
+}
+
+/* =========================================================================
+   6. DRAIN CROSS-SECTION: true scale from CFG
+   ========================================================================= */
+const D = { floorY:330, sensorY:22, x0:64, x1:196, labelX:52 };
+D.pxPerM = (D.floorY - D.sensorY)/CFG.sensorHeight;
+D.rimY = D.floorY - CFG.drainDepth*D.pxPerM;
+const drainY = m => D.floorY - m*D.pxPerM;
+
+function drawDrain(level){                       // level null = no trustworthy reading: empty drain, no beam
+  const w = D.x1 - D.x0, phase = Date.now()/900, has = level != null, y = has ? drainY(level) : D.floorY;
+  let surf = `M${D.x0} ${y}`;
+  for(let x=0; x<=w; x+=8) surf += ` Q ${D.x0+x+4} ${y+Math.sin((x/20)+phase)*2.4}, ${D.x0+x+8} ${y}`;
+  const tick = (v,c) => `<line x1="${D.labelX-8}" y1="${drainY(v)}" x2="${D.x0-4}" y2="${drainY(v)}" stroke="${c}" stroke-width="1.2"/>
+    <text x="${D.labelX-12}" y="${drainY(v)+3}" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="9" fill="${c}">${v.toFixed(2)}</text>`;
+  $('drain').innerHTML = `
+    <defs>
+      <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#3FA9F5" stop-opacity=".88"/><stop offset="100%" stop-color="#123A5C" stop-opacity=".95"/>
+      </linearGradient>
+      <clipPath id="bore"><rect x="${D.x0}" y="${D.rimY}" width="${w}" height="${D.floorY-D.rimY}"/></clipPath>
+    </defs>
+    <path d="M${D.x0-5} ${D.rimY-6} L${D.x0-5} ${D.floorY+5} L${D.x1+5} ${D.floorY+5} L${D.x1+5} ${D.rimY-6}" fill="none" stroke="#144063" stroke-width="9"/>
+    ${has ? `<g clip-path="url(#bore)">
+      <path d="${surf} L${D.x1} ${D.floorY} L${D.x0} ${D.floorY} Z" fill="url(#water)"/>
+      <path d="${surf}" fill="none" stroke="#7FE0FF" stroke-width="1.6"/>
+    </g>` : ''}
+    <rect x="${(D.x0+D.x1)/2-19}" y="${D.sensorY-14}" width="38" height="19" rx="3" fill="#082139" stroke="#2FE3BE" stroke-width="1.2"/>
+    <text x="${(D.x0+D.x1)/2}" y="${D.sensorY-1}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="8" fill="#2FE3BE">SR04</text>
+    ${has ? `<line x1="${(D.x0+D.x1)/2}" y1="${D.sensorY+5}" x2="${(D.x0+D.x1)/2}" y2="${y}" stroke="#2FE3BE" stroke-width="1" stroke-dasharray="3 4" opacity=".85"/>
+    <text x="${(D.x0+D.x1)/2+7}" y="${(D.sensorY+y)/2}" font-family="IBM Plex Mono,monospace" font-size="10" fill="#2FE3BE">${(CFG.sensorHeight-level).toFixed(2)} m</text>` : ''}
+    ${tick(CFG.thrDanger,'#FF5A47')}${tick(CFG.thrWarning,'#FFB020')}
+    <line x1="${D.x0-5}" y1="${D.rimY}" x2="${D.x1+5}" y2="${D.rimY}" stroke="#4E7EA5" stroke-width="1" stroke-dasharray="2 3" opacity=".7"/>
+    <text x="120" y="${D.floorY+26}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#4E7EA5">FLOOR · 0.00 m</text>
+    <text x="120" y="${D.floorY+40}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="9" fill="#4E7EA5">DEPTH ${CFG.drainDepth.toFixed(2)} · SENSOR ${CFG.sensorHeight.toFixed(2)}</text>`;
+}
+
+/* =========================================================================
+   7. HYDROGRAPH: rainfall bars hanging from the top (when a rain gauge reports), level curve below
+   ========================================================================= */
+function drawChart(buf){
+  const box = $('chartBox').getBoundingClientRect();
+  const W = Math.max(300, Math.round(box.width)), H = Math.max(100, Math.round(box.height));
+  const svg = $('chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const L0 = 40, R = W-32, T = 12, B = H-19;
+  const past = CFG.historyMin, fut = CFG.forecastMin, span = past+fut, yMax = CFG.drainDepth;
+  const X = m => L0 + ((m+past)/span)*(R-L0);
+  const Y = v => B - (v/yMax)*(B-T);
+  const rainH = (B-T)*0.32;
+  const now = buf.length ? buf[buf.length-1] : {t:0,level:0,rain:null};
   const rate = rateOfRise(buf);
   const win = buf.filter(p => p.t > now.t - past);
+  const mono = 'font-family="IBM Plex Mono,monospace"';
 
   let s = '';
+  s += `<rect x="${L0}" y="${Y(yMax)}" width="${R-L0}" height="${Y(CFG.thrDanger)-Y(yMax)}" fill="#FF5A47" opacity=".09"/>`;
+  s += `<rect x="${L0}" y="${Y(CFG.thrDanger)}" width="${R-L0}" height="${Y(CFG.thrWarning)-Y(CFG.thrDanger)}" fill="#FFB020" opacity=".09"/>`;
 
-  // threshold bands
-  s += `<rect x="${L}" y="${Y(yMax)}" width="${R-L}" height="${Y(CFG.thrDanger)-Y(yMax)}" fill="#FF5A47" opacity=".10"/>`;
-  s += `<rect x="${L}" y="${Y(CFG.thrDanger)}" width="${R-L}" height="${Y(CFG.thrWarning)-Y(CFG.thrDanger)}" fill="#FFB020" opacity=".10"/>`;
-
-  // grid + y labels
   for(let v=0; v<=yMax+0.001; v+=0.3){
-    s += `<line x1="${L}" y1="${Y(v)}" x2="${R}" y2="${Y(v)}" stroke="#1B4B72" stroke-width="1"/>`;
-    s += `<text x="${L-9}" y="${Y(v)+4}" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="10" fill="#7FA6C6">${v.toFixed(1)}</text>`;
+    s += `<line x1="${L0}" y1="${Y(v)}" x2="${R}" y2="${Y(v)}" stroke="#144063" stroke-width="1"/>`;
+    s += `<text x="${L0-6}" y="${Y(v)+3.5}" text-anchor="end" ${mono} font-size="9" fill="#7BA2C2">${v.toFixed(1)}</text>`;
   }
-  // x labels
   for(let m=-past; m<=fut; m+=30){
-    s += `<line x1="${X(m)}" y1="${T}" x2="${X(m)}" y2="${B}" stroke="#1B4B72" stroke-width="1" opacity=".55"/>`;
-    const lab = m===0 ? 'NOW' : (m>0? '+'+m : m) + ' min';
-    s += `<text x="${X(m)}" y="${B+18}" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10" fill="${m===0?'#2FE3BE':'#7FA6C6'}">${lab}</text>`;
+    s += `<line x1="${X(m)}" y1="${T}" x2="${X(m)}" y2="${B}" stroke="#144063" stroke-width="1" opacity=".5"/>`;
+    s += `<text x="${X(m)}" y="${B+13}" text-anchor="middle" ${mono} font-size="9" fill="${m===0?'#2FE3BE':'#7BA2C2'}">${m===0?'NOW':(m>0?'+':'')+m}</text>`;
   }
 
-  // forecast cone
+  if(win.some(p => p.rain != null)){
+    const bw = Math.max(1.2, (R-L0)/span*0.9);
+    win.forEach(p => {
+      const h = Math.min(rainH, ((p.rain||0)/CFG.rainScaleMax)*rainH);
+      if(h > 0.4) s += `<rect x="${(X(p.t-now.t)-bw/2).toFixed(1)}" y="${T}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="#39BDF8" opacity=".42"/>`;
+    });
+    s += `<text x="${R+4}" y="${T+8}" ${mono} font-size="8.5" fill="#39BDF8">${CFG.rainScaleMax}</text>`;
+    s += `<text x="${R+4}" y="${T+rainH}" ${mono} font-size="8.5" fill="#39BDF8">0</text>`;
+    s += `<text x="${R+4}" y="${T+rainH+13}" ${mono} font-size="8" fill="#5E90BA">mm/h</text>`;
+  }
+
   const endLevel = forecast(now.level, rate);
-  const spread = Math.max(0.04, Math.abs(endLevel - now.level) * 0.35);
-  s += `<path d="M${X(0)} ${Y(now.level)} L${X(fut)} ${Y(Math.min(yMax,endLevel+spread))} L${X(fut)} ${Y(Math.max(0,endLevel-spread))} Z" fill="#7FE0FF" opacity=".18"/>`;
+  const spread = Math.max(0.04, Math.abs(endLevel-now.level)*0.35);
+  s += `<path d="M${X(0)} ${Y(now.level)} L${X(fut)} ${Y(Math.min(yMax,endLevel+spread))} L${X(fut)} ${Y(Math.max(0,endLevel-spread))} Z" fill="#7FE0FF" opacity=".17"/>`;
   s += `<line x1="${X(0)}" y1="${Y(now.level)}" x2="${X(fut)}" y2="${Y(endLevel)}" stroke="#7FE0FF" stroke-width="2" stroke-dasharray="6 5"/>`;
 
-  // history polyline
   if(win.length > 1){
     const pts = win.map(p => `${X(p.t-now.t).toFixed(1)},${Y(p.level).toFixed(1)}`).join(' ');
+    s += `<polygon points="${X(win[0].t-now.t).toFixed(1)},${B} ${pts} ${X(0).toFixed(1)},${B}" fill="#2FE3BE" opacity=".10"/>`;
     s += `<polyline points="${pts}" fill="none" stroke="#2FE3BE" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
 
-  // threshold lines + labels
-  s += `<line x1="${L}" y1="${Y(CFG.thrWarning)}" x2="${R}" y2="${Y(CFG.thrWarning)}" stroke="#FFB020" stroke-width="1.4" stroke-dasharray="5 4"/>`;
-  s += `<line x1="${L}" y1="${Y(CFG.thrDanger)}"  x2="${R}" y2="${Y(CFG.thrDanger)}"  stroke="#FF5A47" stroke-width="1.4" stroke-dasharray="5 4"/>`;
-
-  // now marker
+  s += `<line x1="${L0}" y1="${Y(CFG.thrWarning)}" x2="${R}" y2="${Y(CFG.thrWarning)}" stroke="#FFB020" stroke-width="1.3" stroke-dasharray="5 4"/>`;
+  s += `<line x1="${L0}" y1="${Y(CFG.thrDanger)}" x2="${R}" y2="${Y(CFG.thrDanger)}" stroke="#FF5A47" stroke-width="1.3" stroke-dasharray="5 4"/>`;
   s += `<line x1="${X(0)}" y1="${T}" x2="${X(0)}" y2="${B}" stroke="#2FE3BE" stroke-width="1.4"/>`;
-  s += `<circle cx="${X(0)}" cy="${Y(now.level)}" r="4.5" fill="#061726" stroke="#2FE3BE" stroke-width="2.4"/>`;
+  s += `<circle cx="${X(0)}" cy="${Y(now.level)}" r="4.5" fill="#020C17" stroke="#2FE3BE" stroke-width="2.4"/>`;
   s += `<circle cx="${X(fut)}" cy="${Y(endLevel)}" r="3.5" fill="#7FE0FF"/>`;
-  s += `<text x="${X(fut)-6}" y="${Y(endLevel)-11}" text-anchor="end" font-family="IBM Plex Mono,monospace" font-size="11" fill="#7FE0FF">${endLevel.toFixed(2)} m</text>`;
-
-  s += `<text x="${L}" y="${T-4}" font-family="IBM Plex Mono,monospace" font-size="10" fill="#7FA6C6">LEVEL (m)</text>`;
-
-  $('chart').innerHTML = s;
+  s += `<text x="${X(fut)-6}" y="${Y(endLevel)-10}" text-anchor="end" ${mono} font-size="10" fill="#7FE0FF">${endLevel.toFixed(2)} m</text>`;
+  svg.innerHTML = s;
 }
 
-function drawTable(){
+/* =========================================================================
+   8. NODE STRIP + BANNER + EVENT LOG
+   ========================================================================= */
+function sparkline(buf, col, w = 120, h = 34){
+  const win = buf.slice(-90);
+  if(win.length < 2) return '';
+  const pts = win.map((p,i) =>
+    `${(i/(win.length-1)*w).toFixed(1)},${(h - (p.level/CFG.drainDepth)*h).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polygon points="0,${h} ${pts} ${w},${h}" fill="${col}" opacity=".16"/>
+    <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>
+  </svg>`;
+}
+
+const live = () => SOURCE.mode === 'api';
+const battOf = (n, p) => live() ? meta[n.id]?.batt : p?.batt;
+const rssiOf = (n, p) => live() ? meta[n.id]?.rssi : p?.rssi;
+
+function drawStrip(){
   let html = '';
   NODES.forEach(n => {
-    const { st, p, rate, sev } = nodeInfo(n);
-    const lostSev = st === 'nosignal' && sev >= 0;           // keep the severity chip, add a marker
-    const [cc, ct] = st === 'live' || lostSev ? [SEV[sev], SEVLABEL[sev]] : CHIP[st];
-    const has = sev >= 0;
-    html += `
-      <tr data-id="${n.id}" class="${n.id===activeId?'active':''} ${st==='nosignal'?'stale':''}">
-        <td><span class="node-id">${n.id}</span></td>
-        <td><span class="node-name">${n.name}</span></td>
-        <td class="num">${has ? p.level.toFixed(2) + ' m' : '—'}</td>
-        <td class="num" style="color:${rate>=CFG.rateWarning?'var(--siren)':rate>=CFG.rateWatch?'var(--amber)':'inherit'}">${has ? (rate>=0?'+':'') + rate.toFixed(2) : '—'}</td>
-        <td class="num hide-sm">${p?.rain == null ? '—' : p.rain.toFixed(0) + ' mm/h'}</td>
-        <td class="num hide-sm">${(b => b == null ? '—' : b.toFixed(2) + ' V')(SOURCE.mode === 'api' ? meta[n.id]?.batt : p?.batt)}</td>
-        <td class="num hide-sm">${(r => r == null ? '—' : r + ' dBm')(SOURCE.mode === 'api' ? meta[n.id]?.rssi : p?.rssi)}</td>
-        <td class="num hide-sm">${lastOf(n.id, 'temp') ? lastOf(n.id, 'temp').temp.toFixed(1) + ' °C' : '—'}</td>
-        <td class="num hide-sm">${lastOf(n.id, 'hum') ? lastOf(n.id, 'hum').hum.toFixed(0) + ' %' : '—'}</td>
-        <td><span class="chip ${cc}">${ct}</span>${lostSev ? ' <span class="chip stale">No signal</span>' : ''}</td>
-      </tr>`;
+    const buf = store[n.id], i = nodeInfo(n), p = i.p;
+    const lost = i.st === 'fault' || i.st === 'nodata' || !p;
+    const sev = lost ? 4 : i.sev, col = SEVCOL[sev];
+    const fc = p ? forecast(p.level, i.rate) : 0, lt = p ? leadTime(p.level, i.rate) : null;
+    const chip = lost ? CHIP[i.st === 'live' ? 'nodata' : i.st][1] : SEVLABEL[sev];
+    const b = battOf(n, p), r = rssiOf(n, p);
+    html += `<div class="ncard ${n.id===activeId?'active':''} ${i.st==='nosignal'?'stale':''}" data-id="${n.id}" style="color:${col}">
+      <div class="nv" style="color:${sev>=2&&sev<4?col:'var(--paper)'}">${lost ? '—' : p.level.toFixed(2)} <small>m</small></div>
+      <div style="min-width:0">
+        <div class="nn">${n.name}</div>
+        <div class="nid">${n.id} · ${n.area}</div>
+        ${lost ? '' : sparkline(buf, col)}
+      </div>
+      <div class="nmeta">
+        <span class="chip" style="color:${col};border-color:${col}55;background:${col}14">${chip}</span>${i.st==='nosignal' && !lost ? ' <span class="chip" style="color:#7FA6C6;border-color:#7FA6C655">No signal</span>' : ''}<br>
+        ${lost ? '&nbsp;' : `${i.rate>=0?'+':''}${i.rate.toFixed(2)} m/h &rarr; ${fc.toFixed(2)} m`}<br>
+        ${lt !== null ? `danger in ${lt}m` : (b != null ? b.toFixed(2) + ' V' : '—') + (r != null ? ' · ' + r + ' dBm' : '')}
+      </div>
+    </div>`;
   });
-  $('nodeRows').innerHTML = html;
-  $('nodeRows').querySelectorAll('tr').forEach(tr => {
-    tr.onclick = () => { activeId = tr.dataset.id; render(); };
+  const strip = $('strip');
+  strip.innerHTML = html;
+  strip.querySelectorAll('.ncard').forEach(c =>
+    c.addEventListener('click', () => { activeId = c.dataset.id; render(); }));
+}
+
+const logEntries = [], lastSev = {};
+function trackEvents(){
+  NODES.forEach(n => {
+    const i = nodeInfo(n);
+    if(i.sev < 0) return;
+    if(lastSev[n.id] === undefined){ lastSev[n.id] = i.sev; return; }
+    if(i.sev !== lastSev[n.id]){
+      logEntries.unshift({ at:new Date(), id:n.id, from:lastSev[n.id], to:i.sev, level:i.p.level });
+      if(logEntries.length > 40) logEntries.pop();
+      lastSev[n.id] = i.sev;
+    }
   });
+}
+function drawLog(){
+  const box = $('log');
+  box.innerHTML = !logEntries.length ? `<div class="logempty">No state changes since this page opened.</div>`
+    : logEntries.slice(0,6).map(e => {
+      const up = e.to > e.from;
+      return `<div class="logrow">
+        <time>${e.at.toTimeString().slice(0,8)}</time>
+        <span class="who">${e.id}</span>
+        <span class="what" style="color:${SEVCOL[e.to]}">${up?'▲':'▼'} ${SEVLABEL[e.to]} @ ${e.level.toFixed(2)} m</span>
+      </div>`;
+    }).join('');
+  $('logCount').textContent = NODES.reduce((a,x) => a + (store[x.id]?.length || 0), 0) + ' rows held';
 }
 
 function drawBanner(){
-  let worst = -1, worstNode = null;
+  let worst = -1, w = null;
+  const lost = [];
   NODES.forEach(n => {
     const i = nodeInfo(n);
-    if(i.sev > worst){ worst = i.sev; worstNode = { n, ...i }; }
+    if(i.st === 'nosignal' && i.sev >= 1) lost.push(`<em>${n.id}</em> hasn't reported for ${i.mins} min. Last level <em>${i.p.level.toFixed(2)} m</em>.`);
+    if(i.st === 'live' && i.sev > worst){ worst = i.sev; w = { n, ...i }; }
   });
-
-  const b = $('banner');
-  const lostLines = NODES.map(n => ({ n, ...nodeInfo(n) })).filter(i => i.st === 'nosignal' && i.sev >= 1)
-    .map(i => `<em>${i.n.id}</em> hasn't reported for ${i.mins} min. Last level <em>${i.p.level.toFixed(2)} m</em>.`);
-  if(worst < 2 && !lostLines.length){ b.className = 'banner'; return; }
-
-  const minsToDanger = worstNode.rate > 0
-    ? Math.round(((CFG.thrDanger - worstNode.p.level) / worstNode.rate) * 60)
-    : null;
-
-  b.className = 'banner on ' + (worst===3 ? 'danger' : 'warning');
-  $('bannerTag').textContent = SEVLABEL[worst];
-  let msg = worst===3
-    ? `<em>${worstNode.n.id}</em> at ${worstNode.n.name} has breached the danger threshold — level <em>${worstNode.p.level.toFixed(2)} m</em>. Alert pushed to residents and the district operations room.`
-    : worst===2
-    ? `<em>${worstNode.n.id}</em> at ${worstNode.n.name} is rising at <em>${worstNode.rate.toFixed(2)} m/h</em>`
-      + (minsToDanger !== null && minsToDanger <= 120
-          ? ` — projected to reach danger level in <em>${minsToDanger} min</em>.`
-          : `.`)
+  const b = $('banner'), leadEl = $('bannerLead');
+  if(worst < 2 && !lost.length){
+    b.className = worst < 0 ? 'banner off' : 'banner';   // no live node yet: say nothing rather than "all safe"
+    $('bannerTag').textContent = 'Normal';
+    $('bannerMsg').textContent = 'All nodes within safe limits.';
+    leadEl.textContent = '—'; leadEl.style.color = 'var(--paper)';
+    return;
+  }
+  const lt = w && worst >= 2 ? leadTime(w.p.level, w.rate) : null;
+  b.className = 'banner ' + (worst === 3 ? 'danger' : 'warning');
+  $('bannerTag').textContent = worst >= 2 ? SEVLABEL[worst] : 'No signal';
+  let msg = worst === 3
+    ? `<em>${w.n.id}</em> at ${w.n.name} has breached the danger threshold, level <em>${w.p.level.toFixed(2)} m</em>.`
+    : worst === 2
+    ? `<em>${w.n.id}</em> at ${w.n.name} is rising at <em>${w.rate.toFixed(2)} m/h</em>, now <em>${w.p.level.toFixed(2)} m</em>.`
     : '';
-  msg += (msg && lostLines.length ? '<br>' : '') + lostLines.join('<br>');
+  msg += (msg && lost.length ? ' ' : '') + lost.join(' ');
   $('bannerMsg').innerHTML = msg;
+  leadEl.textContent = worst === 3 ? 'BREACHED' : worst === 2 && lt !== null ? lt + ' min' : '—';
+  leadEl.style.color = worst === 3 ? 'var(--siren)' : 'var(--amber)';
 }
 
-let link = 'ok', lastOk = null;       // link: ok | server | site | master;  lastOk: ms of last good poll
+let link = 'ok', lastOk = null;       // link: ok | server | site | master | unknown;  lastOk: ms of last good poll
 const hhmm = ms => new Date(ms).toTimeString().slice(0,5);
-
 function drawLink(){
   const b = $('linkBanner');
   let msg = '';
@@ -961,71 +1084,127 @@ function drawLink(){
     apiStatus?.radio_ok === false && "The master's radio isn't receiving."].filter(Boolean).join(' ');
 }
 
+/* =========================================================================
+   9. EXPORT
+   ========================================================================= */
+const r3 = (v, d = 3) => v == null ? null : +v.toFixed(d);
+function rowsFor(ids){
+  const out = [];
+  ids.forEach(id => {
+    const n = NODES.find(x => x.id === id), buf = store[id] || [];
+    if(!buf.length) return;
+    const lastT = buf[buf.length-1].t;
+    buf.forEach((p,i) => {
+      const r = rateOfRise(buf.slice(0,i+1));
+      out.push({
+        device_id:id, node_name:n.name, latitude:n.lat, longitude:n.lng,
+        ts:(p.rx != null ? new Date(p.rx*1000) : new Date(Date.now() - (lastT-p.t)*60000)).toISOString(),
+        level_m:r3(p.level), distance_m:r3(CFG.sensorHeight - p.level),
+        rain_mm_h:r3(p.rain,1), battery_v:r3(p.batt), rssi_dbm:p.rssi, snr_db:p.snr,
+        rate_m_per_h:r3(r), forecast_60min_m:r3(forecast(p.level,r)),
+        lead_time_min:leadTime(p.level,r), status:SEVLABEL[severity(p.level,r)]
+      });
+    });
+  });
+  return out;
+}
+function toCSV(rows){
+  if(!rows.length) return '';
+  const cols = Object.keys(rows[0]);
+  const esc = v => { const s = (v === null || v === undefined) ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s; };
+  return [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+}
+function download(filename, text, mime){
+  const url = URL.createObjectURL(new Blob([text],{type:mime}));
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Exported ${filename}`);
+}
+let toastTimer;
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 2600);
+}
+function stamp(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+$('btnCsvAll').onclick = () =>
+  download(`jaga-all-nodes-${stamp()}.csv`, toCSV(rowsFor(NODES.map(n=>n.id))), 'text/csv;charset=utf-8');
+$('btnCsvOne').onclick = () =>
+  download(`jaga-${activeId}-${stamp()}.csv`, toCSV(rowsFor([activeId])), 'text/csv;charset=utf-8');
+$('btnJson').onclick = () =>
+  download(`jaga-dataset-${stamp()}.json`, JSON.stringify({
+    exported_at:new Date().toISOString(),
+    site:$('siteName').textContent || 'JAGA',
+    config:Object.fromEntries(Object.entries(CFG).filter(([k]) => k !== 'cartoKey')),
+    nodes:NODES.map(({id,name,area,lat,lng}) => ({ id,name,area,lat,lng })),
+    events:logEntries.map(e => ({ at:e.at.toISOString(), device_id:e.id,
+      from:SEVLABEL[e.from], to:SEVLABEL[e.to], level_m:+e.level.toFixed(3) })),
+    readings:rowsFor(NODES.map(n=>n.id))
+  }, null, 2), 'application/json');
+
+/* =========================================================================
+   10. RENDER + LOOP
+   ========================================================================= */
 function render(){
   drawLink();
   const n = NODES.find(x => x.id === activeId);
   const buf = store[n.id];
   const { st, p, rate, sev, mins } = nodeInfo(n);
-  drawTable();
-  drawBanner();
-  $('nodeName').textContent = n.name;
-  $('nodeMeta').textContent = n.id + ' · ' + n.area;
+  updateMarkers(); drawStrip(); drawBanner(); drawLog();
+  drawEnv(n);                    // a node with no sonar still has a DHT22
+  $('tileNode').textContent = n.id + ' · ' + n.name;
   $('tiles').classList.toggle('stale', st !== 'live');
-  drawEnv(n);                    // before the early return below: a node with no sonar still has a DHT22
-  $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? `${n.name}'s water sensor isn't reading. Check the sonar wiring.` : st === 'nodata' ? 'No data yet' : '';
+  $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? 'Sonar not reading' : st === 'nodata' ? 'No data yet' : '';
+  const none = v => v == null;
+  const lv = $('levelBig');
   if(!p || st === 'fault'){      // never draw an old level as current
-    ['waterLine','waterBody'].forEach(i => $(i).setAttribute('d', ''));
-    $('beamLabel').textContent = '— m';
-    $('levelBig').textContent = '—';
-    $('levelBig').style.color = 'var(--mist)';
+    drawDrain(null);
+    lv.textContent = '—'; lv.style.color = 'var(--mist)';
   } else {
     drawDrain(p.level);
-    $('levelBig').textContent = p.level.toFixed(2);
-    $('levelBig').style.color = ['var(--signal)','var(--paper)','var(--amber)','var(--siren)'][sev];
+    lv.textContent = p.level.toFixed(2);
+    lv.style.color = ['var(--signal)','var(--paper)','var(--amber)','var(--siren)'][sev];
   }
-  if(!p){ $('chart').innerHTML = ''; drawMap(); return; }
+  if(!p){ $('chart').innerHTML = ''; return; }
   drawChart(buf);
-  const fc = forecast(p.level, rate);
-  const fault = st === 'fault';
+  const fault = st === 'fault', fc = forecast(p.level, rate), lt = leadTime(p.level, rate);
+  const set = (id, cls, html) => { $(id).className = 'v ' + cls; $(id).innerHTML = html; };
 
-  $('rateV').className = 'v ' + (rate>=CFG.rateWarning?'bad':rate>=CFG.rateWatch?'warn':'good');
-  $('rateV').innerHTML = fault ? '—' : `${rate>=0?'+':''}${rate.toFixed(2)} <small>m/h</small>`;
-  $('rateSub').textContent = fault ? 'No reading' : 'Over last 15 min';
+  set('rateV', fault ? '' : rate>=CFG.rateWarning?'bad':rate>=CFG.rateWatch?'warn':'good',
+    fault ? '—' : `${rate>=0?'+':''}${rate.toFixed(2)} <small>m/h</small>`);
+  set('fcV', fault ? '' : fc>=CFG.thrDanger?'bad':fc>=CFG.thrWarning?'warn':'good',
+    fault ? '—' : `${fc.toFixed(2)} <small>m</small>`);
+  $('fcSub').textContent = fault ? 'No reading' : rate <= 0 ? 'Receding' : fc>=CFG.thrDanger ? 'Breaches danger' : fc>=CFG.thrWarning ? 'Reaches warning' : 'Below warning';
+  set('leadV', fault || lt === null ? (p.level >= CFG.thrDanger && !fault ? 'bad' : 'good') : lt <= 30 ? 'bad' : 'warn',
+    fault ? '—' : lt === null ? (p.level >= CFG.thrDanger ? 'NOW' : '&mdash;') : `${lt} <small>min</small>`);
+  $('leadSub').textContent = fault || lt === null ? 'Not trending to danger' : 'Until ' + CFG.thrDanger.toFixed(2) + ' m';
 
-  $('fcV').className = 'v ' + (fc>=CFG.thrDanger?'bad':fc>=CFG.thrWarning?'warn':'good');
-  $('fcV').innerHTML  = fault ? '—' : `${fc.toFixed(2)} <small>m</small>`;
-  $('fcSub').textContent = fault ? 'No reading' : rate <= 0
-    ? 'Receding toward base flow'
-    : fc >= CFG.thrDanger ? 'Breaches danger threshold'
-    : fc >= CFG.thrWarning ? 'Reaches warning level'
-    : 'Stays below warning level';
+  set('rainV', '', none(p.rain) ? '— <small>mm/h</small>' : `${p.rain.toFixed(1)} <small>mm/h</small>`);
+  $('rainSub').textContent = none(p.rain) ? 'No rain gauge fitted' : p.rain>40?'Intense':p.rain>10?'Moderate':'Light';
 
-  const none = v => v == null;
-  $('rainV').innerHTML = none(p.rain) ? '— <small>mm/h</small>' : `${p.rain.toFixed(1)} <small>mm/h</small>`;
-  $('rainSub').textContent = none(p.rain) ? 'No rain gauge fitted' : p.rain > 40 ? 'Intense — convective cell' : p.rain > 10 ? 'Moderate' : 'Light';
-
-  // api mode reads the newest row (the sonar may be failing); the simulator keeps them in the store
-  const live = SOURCE.mode === 'api', m = meta[n.id] || {};
-  const batt = live ? m.batt : p.batt, rssi = live ? m.rssi : p.rssi, retries = live ? m.retries : null;
-  $('battV').className = 'v ' + (none(batt) ? '' : batt < 3.4 ? 'bad' : batt < 3.7 ? 'warn' : 'good');
-  $('battV').innerHTML = none(batt) ? '— <small>V</small>' : `${batt.toFixed(2)} <small>V</small>`;
+  const batt = battOf(n, p), rssi = rssiOf(n, p), retries = live() ? meta[n.id]?.retries : null;
+  set('battV', none(batt) ? '' : batt < 3.4 ? 'bad' : batt < 3.7 ? 'warn' : 'good',
+    none(batt) ? '— <small>V</small>' : `${batt.toFixed(2)} <small>V</small>`);
   $('battSub').textContent = none(batt) ? 'Not monitored' : Math.round(Math.max(0, Math.min(1, (batt-3.2)/(4.2-3.2)))*100) + '% charge';
 
   if(!none(rssi)){                // the master: signal of its SIM900A
-    $('rssiV').className = 'v ' + (rssi > -70 ? 'good' : rssi > -85 ? 'warn' : 'bad');
-    $('rssiV').innerHTML = `${rssi} <small>dBm</small>`;
-    $('rssiSub').textContent = live ? 'SIM900A mobile signal' : 'SNR ' + p.snr + ' dB · SF9';
+    set('rssiV', rssi > -70 ? 'good' : rssi > -85 ? 'warn' : 'bad', `${rssi} <small>dBm</small>`);
+    $('rssiSub').textContent = live() ? 'SIM900A mobile signal' : 'SNR ' + p.snr + ' dB';
   } else if(!none(retries)){      // a slave: how hard its nRF24 had to try to reach the master
-    $('rssiV').className = 'v ' + (retries <= 2 ? 'good' : retries <= 8 ? 'warn' : 'bad');
-    $('rssiV').innerHTML = retries <= 2 ? 'Good' : retries <= 8 ? 'Fair' : 'Weak';
+    set('rssiV', retries <= 2 ? 'good' : retries <= 8 ? 'warn' : 'bad', retries <= 2 ? 'Good' : retries <= 8 ? 'Fair' : 'Weak');
     $('rssiSub').textContent = `nRF24 · ${retries} ${retries === 1 ? 'retry' : 'retries'}`;
   } else {
-    $('rssiV').className = 'v';
-    $('rssiV').innerHTML = '— <small>dBm</small>';
+    set('rssiV', '', '— <small>dBm</small>');
     $('rssiSub').textContent = 'Not reported';
   }
 
-  if(SOURCE.mode === 'simulate'){
+  if(!live()){
     $('seenV').innerHTML = `${(Date.now()/1000|0) % 60} <small>s ago</small>`;
   } else if(meta[n.id]?.rx && ageOf(meta[n.id]) != null){
     // ponytail: browser clock vs server clock; fine on one machine, skews if they differ
@@ -1034,12 +1213,8 @@ function render(){
   } else {
     $('seenV').innerHTML = '—';
   }
-  drawMap();
 }
 
-/* =========================================================================
-   6. LOOP
-   ========================================================================= */
 let fails = 0, stopped = false;
 async function tick(){
   if(SOURCE.mode === 'simulate'){
@@ -1054,123 +1229,21 @@ async function tick(){
       if(link === 'unknown') stopped = true;
     }
     $('modeLabel').textContent = link === 'unknown' ? 'No such server' : link === 'ok' ? 'Live feed · ' + fmtClock() : link === 'site' ? 'Site offline — showing last data' : link === 'master' ? 'Master offline — showing last data' : 'Offline — showing last data';
-  } else {
-    try {
-      const rows = await SOURCE.fetchLatest();
-      NODES.forEach(n => store[n.id] = []);
-      rows.slice().reverse().forEach(r => {
-        if(!store[r.device_id]) store[r.device_id] = [];
-        store[r.device_id].push({
-          t: new Date(r.ts).getTime()/60000,
-          level: r.level_m, rain: r.rain_mm_h ?? 0,
-          batt: r.battery_v ?? 0, rssi: r.rssi ?? 0, snr: r.snr ?? 0
-        });
-      });
-    } catch(e){
-      $('modeLabel').textContent = 'Feed unreachable — check credentials';
-    }
   }
+  trackEvents();
   render();
 }
 
+const fmtClock = () => new Date().toTimeString().slice(0,8);
+initMap();
 if(SOURCE.mode === 'api') getJSON('/api/site').then(x => { if(x?.name) $('siteName').textContent = x.name; }).catch(() => {});
-// warm-up so the chart isn't empty on first paint (simulator only)
-if(SOURCE.mode === 'simulate') for(let i=0;i<40;i++) simStep();
-$('srcCode').textContent = SOURCE.mode;
+if(SOURCE.mode === 'simulate'){
+  for(let i=0;i<40;i++) simStep();
+  NODES.forEach(n => { lastSev[n.id] = nodeInfo(n).sev; });
+}
 $('modeLabel').textContent = SOURCE.mode === 'simulate' ? 'Simulated feed' : 'Connecting…';
+render();
 
-/* =========================================================================
-   7. MAP — OpenStreetMap + river overlay, draggable node pins
-   ========================================================================= */
-let leafMap = null, fitKey = '';
-const pins = {};
-const SEVCOLOR = ['#2FE3BE','#9FD8FF','#FFB020','#FF5A47','#7FA6C6'];
-const posKey = () => NODES.map(n => n.lat + ',' + n.lng).join(';');
-
-function pinIcon(n, sev){
-  const active = n.id === activeId;
-  return L.divIcon({ className:'', iconSize:[26,26], iconAnchor:[13,13],
-    html:`<div style="width:26px;height:26px;border-radius:50%;box-sizing:border-box;background:#0C2941;`
-       + `border:5px solid ${SEVCOLOR[sev]};box-shadow:0 1px 4px rgba(0,0,0,.5)${active ? ',0 0 0 3px #E7F3FF' : ''};`
-       + `color:#E7F3FF;font:600 10px/16px 'IBM Plex Mono',monospace;text-align:center">${nodeNum(n.id)}</div>` });
-}
-
-let noteTimer;
-async function savePos(n, prev){
-  try {
-    const r = await fetch(`${API}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat:n.lat, lng:n.lng }) });
-    if(!r.ok) throw new Error(r.status);
-  } catch(e){
-    n.lat = prev.lat; n.lng = prev.lng;          // put the pin back
-    pins[n.id].setLatLng([prev.lat, prev.lng]);
-    fitKey = posKey();
-    $('pinNote').textContent = "Couldn't save the position. Nothing changed.";
-    clearTimeout(noteTimer);
-    noteTimer = setTimeout(() => { $('pinNote').textContent = ''; }, 8000);
-  }
-}
-
-const MAPMSG = "The map couldn't load. The readings above and below still update.";
-function drawMap(){
-  try { drawMapInner(); }
-  catch(e){ console.error(e); $('map').textContent = MAPMSG; }
-}
-
-const TILEMSG = "Map tiles couldn't load. Pins still show where the nodes are.";
-function drawMapInner(){
-  const box = $('map');
-  if(!window.L){ box.textContent = MAPMSG; return; }
-  if(!leafMap){
-    box.textContent = '';
-    leafMap = L.map(box, { scrollWheelZoom:false });
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      { maxZoom:19, attribution:'&copy; OpenStreetMap contributors' })
-      .on('tileerror', () => { if(!$('pinNote').textContent) $('pinNote').textContent = TILEMSG; })
-      .on('tileload', () => { if($('pinNote').textContent === TILEMSG) $('pinNote').textContent = ''; })
-      .addTo(leafMap);
-    (window.RIVERS || []).forEach(w =>
-      L.polyline(w.p, { color:'#0b5cd5', weight:5, opacity:.85 }).bindTooltip(w.n || w.w).addTo(leafMap));
-  }
-  NODES.forEach(n => {
-    const i = nodeInfo(n), sev = i.st === 'live' ? i.sev : 4;     // 4 = grey ring
-    const key = sev + n.id + (n.id === activeId);
-    let pin = pins[n.id];
-    if(!pin){
-      pin = pins[n.id] = L.marker([n.lat, n.lng], { draggable:true, icon:pinIcon(n, sev) }).addTo(leafMap);
-      pin.bindTooltip(() => `${n.name} (${n.id})<br>${n.lat.toFixed(5)}°N ${n.lng.toFixed(5)}°E`);
-      pin.on('click', () => { activeId = n.id; render(); });
-      let prev;
-      pin.on('dragstart', () => { prev = { lat:n.lat, lng:n.lng }; });
-      pin.on('dragend', () => {
-        const ll = pin.getLatLng();
-        n.lat = ll.lat; n.lng = ll.lng;
-        fitKey = posKey();                      // don't re-zoom under the user's hand
-        savePos(n, prev);
-      });
-    } else if(!pin.dragging._draggable._moving){
-      pin.setLatLng([n.lat, n.lng]);
-    }
-    if(pin._key !== key){ pin.setIcon(pinIcon(n, sev)); pin._key = key; }
-  });
-  if(fitKey !== posKey()){                      // refit only when positions change from outside
-    leafMap.fitBounds(NODES.map(n => [n.lat, n.lng]), { padding:[40,40], maxZoom:17 });
-    fitKey = posKey();
-  }
-}
-
-// saved positions override the placeholders above
-async function loadPositions(){
-  try {
-    (await getJSON('/api/nodes')).forEach(j => {
-      const n = NODES[j.node_id - 1];
-      if(n && j.lat != null && j.lng != null){ n.lat = j.lat; n.lng = j.lng; }
-    });
-  } catch(e){ /* keep placeholders */ }
-  drawMap();
-}
-
-window.addEventListener('load', () => { if(leafMap){ leafMap.invalidateSize(); fitKey = ''; drawMap(); } });  // fonts/layout settle after first paint
 let pollTimer, busy = false;
 async function poll(){                         // api mode: 10 s, or 20 / 30 s after failures
   if(busy || stopped) return;
@@ -1179,12 +1252,17 @@ async function poll(){                         // api mode: 10 s, or 20 / 30 s a
   busy = false;
   if(!stopped) pollTimer = setTimeout(poll, 10000 * Math.min(3, Math.max(1, fails)));
 }
-render();
-if(SOURCE.mode !== 'simulate'){ poll(); loadPositions(); }
 if(SOURCE.mode === 'simulate') setInterval(tick, CFG.tickMs);
-else document.addEventListener('visibilitychange', () => { if(!document.hidden) poll(); });
+else { poll(); loadPositions(); document.addEventListener('visibilitychange', () => { if(!document.hidden) poll(); }); }
 setInterval(() => { $('clock').textContent = fmtClock(); }, 1000);
 $('clock').textContent = fmtClock();
+
+let rz;
+window.addEventListener('resize', () => {
+  clearTimeout(rz);
+  rz = setTimeout(() => { map.invalidateSize(); render(); }, 140);
+});
+window.addEventListener('load', () => { map.invalidateSize(); fitMap(); });   // fonts/layout settle after first paint
 </script>
 </body>
 </html>
