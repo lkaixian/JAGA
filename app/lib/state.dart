@@ -21,6 +21,22 @@ bool crossedIntoAlert(NodeStatus? prev, NodeStatus next) =>
 List<int> mergeNodeIds(Iterable<int> known, Iterable<int> fromNodes, Iterable<int> fromLatest) =>
     {...known, ...fromNodes, ...fromLatest}.toList()..sort();
 
+/// Nodes with no readings on the server get a fake storm stream in the app (never stored, never alerted on).
+const _simNodes = {
+  1: ('Tasik G3', 1.8630, 103.0840),
+  2: ('Infront FKAAB', 1.8640, 103.0850),
+  3: ('Infront FSKTM', 1.8650, 103.0860),
+  4: ('Infront FPTP', 1.8660, 103.0870),
+  5: ('Infront FKEE', 1.8670, 103.0880),
+};
+final _rng = Random();
+
+/// Rainfall in mm/h, a storm every 3 hours; [seed] delays it per node.
+double _storm(double t, double seed) {
+  final x = t - 25 - seed * 7;
+  return max(0, 68 * exp(-pow(x / 16, 2)) + 3 * max(0, sin((t + seed * 20) / 28)) + (_rng.nextDouble() - .5) * 2.5);
+}
+
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final SharedPreferences _prefs;
   final _notifier = FlutterLocalNotificationsPlugin();
@@ -96,6 +112,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   int _fails = 0;
   bool _paused = false;
   final Set<int> _historyLoaded = {};
+  final Set<int> _sim = {}; // node ids currently showing the fake stream
+  final Map<int, int> _simMin = {}; // minute (since epoch) of the newest fake reading
+  final Map<int, double> _simLevel = {};
   final Map<int, NodeStatus> _lastStatus = {};
   final Map<int, NodeHealth> _lastHealth = {};
   bool notificationsOff = false;
@@ -253,7 +272,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> poll() async {
     try {
       if (nodes.isEmpty) nodes = await _api.nodes();
+      _addSimNodes();
       final latest = await _api.latest();
+      for (final r in latest) {
+        if (_sim.remove(r.nodeId)) { // real data arrived: drop the fake stream, load the real history
+          history[r.nodeId] = [];
+          _historyLoaded.remove(r.nodeId);
+          _rename(r.nodeId, false);
+        }
+      }
       final ids = mergeNodeIds(history.keys, nodes.map((n) => n.id), latest.map((r) => r.nodeId));
       final old = Map.of(history);
       history
@@ -273,6 +300,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         list.add(r);
         if (list.length > maxPoints) list.removeAt(0);
       }
+      _addSim();
       _fails = 0;
       link = linkState(serverReachable: true, masterOk: serverStatus!.masterOk, siteOk: serverStatus!.siteOk);
       lastOk = DateTime.now();
@@ -288,6 +316,41 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _schedule();
   }
 
+  void _addSimNodes() {
+    for (final e in _simNodes.entries) {
+      if (nodes.every((n) => n.id != e.key)) nodes.add(Node(e.key, e.value.$1, e.value.$2, e.value.$3));
+    }
+    nodes.sort((a, b) => a.id.compareTo(b.id));
+  }
+
+  void _rename(int id, bool sim) {
+    final i = nodes.indexWhere((n) => n.id == id);
+    if (i < 0) return;
+    final n = nodes[i], base = n.name.replaceAll(' (sim)', ''), d = _simNodes[id];
+    nodes[i] = Node(id, sim ? '$base (sim)' : base, n.lat.isNaN && d != null ? d.$2 : n.lat, n.lng.isNaN && d != null ? d.$3 : n.lng);
+  }
+
+  /// Keeps a fake reading per minute for every node the server has nothing for.
+  void _addSim() {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 60000;
+    for (final id in _simNodes.keys) {
+      final list = history[id];
+      if (list == null || (!_sim.contains(id) && list.isNotEmpty)) continue; // real data
+      if (_sim.add(id)) _rename(id, true);
+      var t = _simMin[id] ?? now - maxPoints, level = _simLevel[id] ?? 120.0 + id * 20;
+      while (t < now) {
+        t++;
+        final rain = _storm((t % 180).toDouble(), (id - 1) * 0.6);
+        level = (level + rain * 0.42 * (1 + id * 0.12) - level * 0.03 + (_rng.nextDouble() - .5) * 4).clamp(50.0, mountMm);
+        list.add(Reading(t * 60, id, level.round(), 28 - min(6, rain * 0.08),
+            min(99.0, 68 + min(25.0, rain * 0.35)), 1450 - level.round(), receivedAt: t * 60.0));
+        if (list.length > maxPoints) list.removeAt(0);
+      }
+      _simMin[id] = now;
+      _simLevel[id] = level;
+    }
+  }
+
   void _show(int id, String title, String body) => _notifier.show(
       id: id,
       title: title,
@@ -300,7 +363,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     final nowS = DateTime.now().millisecondsSinceEpoch / 1000;
     for (final id in history.keys) {
       final r = latestOf(id);
-      if (r == null) continue;
+      if (r == null || _sim.contains(id)) continue;
       final name = nodeById(id)?.name ?? 'Node $id';
       final s = r.status(warnMm, dangerMm);
       if (crossedIntoAlert(_lastStatus[id], s)) {

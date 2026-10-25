@@ -137,6 +137,42 @@ def with_backfill(rows):
     return out
 
 
+NTFY_URL = os.environ.get("NTFY_URL", "").strip()  # e.g. https://ntfy.sh/<a-long-random-topic>; empty = no phone alerts
+SONAR_ERR = -2147483648  # INT32_MIN from the firmware
+last_level = {}  # node_id -> 0 normal, 1 warning, 2 danger, as of the last reading stored
+
+
+def ntfy(title, body, priority, tags):
+    """Fire-and-forget POST to ntfy; a failure is printed, never raised (it must not break ingest)."""
+    def go():
+        try:
+            req = urllib.request.Request(NTFY_URL, data=body.encode(), method="POST", headers={
+                "Title": title, "Priority": str(priority), "Tags": tags})
+            urllib.request.urlopen(req, timeout=10).close()
+        except Exception as e:
+            print(f"ntfy failed: {e}", flush=True)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def notify(rows):
+    """One ntfy message each time a node's level rises into warning or danger (not on every reading)."""
+    if not NTFY_URL:
+        return
+    site = os.environ.get("SITE_NAME", "JAGA")
+    for r in sorted(rows, key=lambda r: r["log_timestamp_s"]):
+        mm = r["water_level_mm"]
+        if mm == SONAR_ERR:
+            continue
+        lvl = 2 if mm >= DANGER_MM else 1 if mm >= WARN_MM else 0
+        prev = last_level.get(r["node_id"])
+        last_level[r["node_id"]] = lvl
+        if prev is not None and lvl > prev:  # first sight of a node after a restart stays quiet
+            name = "Danger" if lvl == 2 else "Warning"
+            ntfy(f"{name}: {site} node {r['node_id']}", f"Water level {mm / 1000:.2f} m "
+                 f"(warning {WARN_MM / 1000:.2f} m, danger {DANGER_MM / 1000:.2f} m)",
+                 5 if lvl == 2 else 4, "rotating_light" if lvl == 2 else "warning")
+
+
 def store(rows):
     global rejected, last_prune
     good = [r for r in rows if valid(r)]
@@ -147,11 +183,14 @@ def store(rows):
             last_prune = time.time()
             if n:
                 print(f"pruned {n} readings older than {RETAIN_DAYS} days", flush=True)
+        fresh = []
         for r in good:
             if dup(c, r):
                 continue
+            fresh.append(r)
             c.execute(f"INSERT INTO readings (received_at, {','.join(COLS + OPT)}) VALUES (?{',?' * (len(COLS + OPT))})",
                       (time.time() - r.get("_age", 0), *[r[k] for k in COLS], *[r.get(k) for k in OPT]))
+    notify(fresh)
 
 
 def poll_once():

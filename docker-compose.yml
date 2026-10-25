@@ -12,6 +12,8 @@ services:
       HUB_URL: ${HUB_URL:-}
       SITE_SLUG: ${SITE_SLUG:-}
       SITE_TOKEN: ${SITE_TOKEN:-}
+      # Phone alerts via ntfy: https://ntfy.sh/<a-long-random-topic>, then subscribe to that topic in the ntfy app
+      NTFY_URL: ${NTFY_URL:-}
       # Water levels this site publishes to clients (mm above the drain floor)
       WARN_MM: ${WARN_MM:-700}
       DANGER_MM: ${DANGER_MM:-900}
