@@ -475,7 +475,7 @@ def nodes():
 def site():
     """Name, logo and centre point, so the app can show this server in its lobby."""
     pts = [(n["lat"], n["lng"]) for n in nodes() if n.get("lat") is not None and n.get("lng") is not None]
-    return {"name": os.environ.get("SITE_NAME", "JAGA"),
+    return {"name": os.environ.get("SITE_NAME", "JAGA"), "slug": SITE_SLUG or None,  # slug: lets a dashboard served by the hub tell this is its own site
             "logo": os.environ.get("SITE_LOGO", "/logo.png"),  # path on this server, or a full URL
             "lat": sum(p[0] for p in pts) / len(pts) if pts else None,
             "lng": sum(p[1] for p in pts) / len(pts) if pts else None}

@@ -808,9 +808,20 @@ const fitMap = () => { map.fitBounds(L.latLngBounds(NODES.map(n => [n.lat, n.lng
 
 const POSKEY = 'jaga-pos-' + (PAGE_SLUG || 'local');
 const localPos = () => { try { return JSON.parse(localStorage.getItem(POSKEY)) || {}; } catch(e){ return {}; } };
+// The hub refuses position changes ("set by the site"). When this dashboard is for the site that runs on this very
+// machine, write to the site's own API instead; the site then pushes the position up to the hub.
+let writeBase;
+async function writeApi(){
+  if(writeBase) return writeBase;
+  writeBase = API;
+  if(PAGE_SLUG){
+    try { if((await (await fetch(location.origin + '/api/site')).json()).slug === PAGE_SLUG) writeBase = location.origin; } catch(e){ /* stay with the hub */ }
+  }
+  return writeBase;
+}
 async function savePos(n, prev){
   try {
-    const r = await fetch(`${API}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
+    const r = await fetch(`${await writeApi()}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat:n.lat, lng:n.lng }) });
     if(!r.ok) throw new Error(r.status);
   } catch(e){
@@ -897,7 +908,7 @@ function updateMarkers(){
 // saved positions override the placeholders above
 async function loadPositions(){
   try {
-    (await getJSON('/api/nodes')).forEach(j => {
+    (await (await fetch((await writeApi()) + '/api/nodes')).json()).forEach(j => {   // the site's own copy is fresher than the hub's
       const n = NODES[j.node_id - 1];
       if(n && j.lat != null && j.lng != null){
         n.lat = j.lat; n.lng = j.lng;
