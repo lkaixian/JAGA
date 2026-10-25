@@ -241,6 +241,9 @@ body::before{
   .legend{flex-wrap:wrap}
 }
 
+.chart-body{position:relative}
+.chart-body svg{position:absolute;inset:0}
+.gauge-body{position:relative}
 .alerts{display:flex;flex-direction:column;gap:var(--gap);min-height:0}
 .ncard .nv{font-size:clamp(14px,2.4vh,26px)}
 .ncard .nmeta{font-size:clamp(6px,.85vh,9px);line-height:1.45}
@@ -385,7 +388,7 @@ dialog.trend::backdrop{background:rgba(3,10,18,.7)}
         <div class="legend">
           <span><i style="background:#2FE3BE"></i>Level</span>
           <span><i style="background:rgba(57,189,248,.55);height:7px"></i>Rainfall</span>
-          <span><i style="background:#7FE0FF"></i>Forecast</span>
+          <span><i style="background:#7FE0FF"></i>Forecast (trend fit)</span>
           <span><i style="background:#FFB020"></i>Warn 0.70</span>
           <span><i style="background:#FF5A47"></i>Danger 0.90</span>
         </div>
@@ -572,13 +575,24 @@ function simStep(){
 /* =========================================================================
    4. ANALYTICS
    ========================================================================= */
+// Least-squares line through the last windowMin minutes: slope = rate of rise (m/h), sd = how noisy the readings are.
+function fitTrend(buf, windowMin = 15){
+  if(buf.length < 3) return null;
+  const last = buf[buf.length-1], pts = buf.filter(p => p.t >= last.t - windowMin);
+  if(pts.length < 3) return null;
+  const n = pts.length, mt = pts.reduce((a,p) => a + p.t, 0)/n, ml = pts.reduce((a,p) => a + p.level, 0)/n;
+  let sxx = 0, sxy = 0;
+  pts.forEach(p => { sxx += (p.t-mt)**2; sxy += (p.t-mt)*(p.level-ml); });
+  if(sxx === 0) return null;
+  const slope = sxy/sxx, sd = Math.sqrt(pts.reduce((a,p) => a + (p.level - ml - slope*(p.t-mt))**2, 0)/n);
+  return { slope: slope*60, sd };
+}
 function rateOfRise(buf, windowMin = 15){
+  const f = fitTrend(buf, windowMin);
+  if(f) return f.slope;
   if(buf.length < 2) return 0;
-  const last = buf[buf.length-1];
-  const back = buf.find(p => p.t >= last.t - windowMin);   // readings are not always 1/min
-  const dt = (last.t - back.t) / 60;              // hours
-  if(dt <= 0) return 0;
-  return (last.level - back.level) / dt;          // m/h
+  const last = buf[buf.length-1], prev = buf[buf.length-2], dt = (last.t - prev.t)/60;
+  return dt > 0 ? (last.level - prev.level)/dt : 0;
 }
 
 function forecast(level, rate){
@@ -792,12 +806,18 @@ const markers = {}, rings = {};
 const posKey = () => NODES.map(n => n.lat + ',' + n.lng).join(';');
 const fitMap = () => { map.fitBounds(L.latLngBounds(NODES.map(n => [n.lat, n.lng])), { padding:[64,64], maxZoom:18 }); fitKey = posKey(); };
 
+const POSKEY = 'jaga-pos-' + (PAGE_SLUG || 'local');
+const localPos = () => { try { return JSON.parse(localStorage.getItem(POSKEY)) || {}; } catch(e){ return {}; } };
 async function savePos(n, prev){
   try {
     const r = await fetch(`${API}/api/nodes/${nodeNum(n.id)}`, { method:'PUT',
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({ lat:n.lat, lng:n.lng }) });
     if(!r.ok) throw new Error(r.status);
   } catch(e){
+    if(String(e.message) === '403'){             // public (tunnel) visitors can't write: remember it in this browser only
+      const all = localPos(); all[n.id] = [n.lat, n.lng];
+      try { localStorage.setItem(POSKEY, JSON.stringify(all)); toast('Moved. Saved on this device only: the public site is read-only.'); return; } catch(_){}
+    }
     n.lat = prev.lat; n.lng = prev.lng;          // put the pin back
     markers[n.id].setLatLng([prev.lat, prev.lng]); rings[n.id].setLatLng([prev.lat, prev.lng]);
     toast("Couldn't save the position. Nothing changed.");
@@ -868,7 +888,7 @@ function updateMarkers(){
     m.className = 'mk' + (sev >= 2 && sev < 4 ? ' alert' : '') + (n.id === activeId ? ' active' : '');
     m.style.color = col;
     m.innerHTML = `<i class="ring"></i><i class="core"></i>
-      <div class="lab"><b>${n.id}</b><s>${n.name} · ${p && i.st !== 'fault' ? p.level.toFixed(2) + ' m' : 'no level'}</s></div>`;
+      <div class="lab"><b>${n.id}</b><s>${n.name}${n.sim ? ' (sim)' : ''} · ${p && i.st !== 'fault' ? p.level.toFixed(2) + ' m' : 'no level'}</s></div>`;
     rings[n.id].setStyle({ color:col, fillColor:col,
       fillOpacity: sev >= 2 && sev < 4 ? .14 : .05, opacity: sev >= 2 && sev < 4 ? .8 : .4 });
   });
@@ -885,6 +905,8 @@ async function loadPositions(){
       }
     });
   } catch(e){ /* keep placeholders */ }
+  const mine = localPos();                       // moves made on this device win
+  NODES.forEach(n => { if(mine[n.id]){ [n.lat, n.lng] = mine[n.id]; markers[n.id].setLatLng(mine[n.id]); rings[n.id].setLatLng(mine[n.id]); } });
   fitMap();
 }
 
@@ -967,7 +989,7 @@ function drawChart(buf){
   }
 
   const endLevel = forecast(now.level, rate);
-  const spread = Math.max(0.04, Math.abs(endLevel-now.level)*0.35);
+  const spread = Math.max(0.04, Math.abs(endLevel-now.level)*0.35 + 2*(fitTrend(buf)?.sd || 0));
   s += `<path d="M${X(0)} ${Y(now.level)} L${X(fut)} ${Y(Math.min(yMax,endLevel+spread))} L${X(fut)} ${Y(Math.max(0,endLevel-spread))} Z" fill="#7FE0FF" opacity=".17"/>`;
   s += `<line x1="${X(0)}" y1="${Y(now.level)}" x2="${X(fut)}" y2="${Y(endLevel)}" stroke="#7FE0FF" stroke-width="2" stroke-dasharray="6 5"/>`;
 
@@ -1017,7 +1039,7 @@ function drawStrip(){
       <div class="nv" style="color:${sev>=2&&sev<4?col:'var(--paper)'}">${lost ? '—' : p.level.toFixed(2)} <small>m</small></div>
       <div style="min-width:0">
         <div class="nn">${n.name}</div>
-        <div class="nid">${n.id} · ${n.area}</div>
+        <div class="nid">${n.id} · ${n.sim ? 'SIMULATED' : n.area}</div>
         ${lost ? '' : sparkline(buf, col)}
       </div>
       <div class="nmeta">
@@ -1080,9 +1102,9 @@ function drawBanner(){
   b.className = 'banner ' + (worst === 3 ? 'danger' : 'warning');
   $('bannerTag').textContent = worst >= 2 ? SEVLABEL[worst] : 'No signal';
   let msg = worst === 3
-    ? `<em>${w.n.id}</em> at ${w.n.name} has breached the danger threshold, level <em>${w.p.level.toFixed(2)} m</em>.`
+    ? `<em>${w.n.id}</em> at ${w.n.name} has breached the danger threshold, level <em>${w.p.level.toFixed(2)} m</em>.${w.n.sim ? ' (simulated node)' : ''}`
     : worst === 2
-    ? `<em>${w.n.id}</em> at ${w.n.name} is rising at <em>${w.rate.toFixed(2)} m/h</em>, now <em>${w.p.level.toFixed(2)} m</em>.`
+    ? `<em>${w.n.id}</em> at ${w.n.name} is rising at <em>${w.rate.toFixed(2)} m/h</em>, now <em>${w.p.level.toFixed(2)} m</em>.${w.n.sim ? ' (simulated node)' : ''}`
     : '';
   msg += (msg && lost.length ? ' ' : '') + lost.join(' ');
   $('bannerMsg').innerHTML = msg;
@@ -1181,7 +1203,7 @@ function render(){
   const { st, p, rate, sev, mins } = nodeInfo(n);
   updateMarkers(); drawStrip(); drawBanner(); drawLog();
   drawEnv(n);                    // a node with no sonar still has a DHT22
-  $('tileNode').textContent = n.id + ' · ' + n.name;
+  $('tileNode').textContent = n.id + ' · ' + n.name + (n.sim ? ' · simulated' : '');
   $('tiles').classList.toggle('stale', st !== 'live');
   $('levelNote').textContent = st === 'nosignal' ? `last seen ${mins} min ago` : st === 'fault' ? 'Sonar not reading' : st === 'nodata' ? 'No data yet' : '';
   const none = v => v == null;
@@ -1245,6 +1267,7 @@ async function tick(){
   } else if(SOURCE.mode === 'api'){
     try {
       await fetchApi();
+      NODES.forEach(n => { n.sim = !meta[n.id] || !!meta[n.id].sim; if(n.sim) simFill(n); });
       lastOk = Date.now(); fails = 0;
       link = apiStatus?.site_ok === false ? 'site' : apiStatus?.master_ok === false ? 'master' : 'ok';          // absent master_ok = talking to the master itself
     } catch(e){
@@ -1256,6 +1279,29 @@ async function tick(){
   trackEvents();
   render();
 }
+
+/* Nodes the server has no readings for run a fake storm stream in the browser (never stored), so the
+   dashboard has something to show. They switch to real data the moment the server has rows for them. */
+const simState = {}, simBuf = {}, simEnv = {};
+function simFill(n){
+  const now = Math.floor(Date.now()/60000);
+  const st = simState[n.id] || (simState[n.id] = { t: now - CFG.historyMin - 1, level: 0.12 + n.seed*0.02 });
+  const buf = simBuf[n.id] || (simBuf[n.id] = []), envs = simEnv[n.id] || (simEnv[n.id] = []);
+  for(; st.t < now; st.t++){
+    const rain = stormCurve(st.t % 180, n.seed);       // a storm every 3 hours
+    st.level = Math.max(0.05, Math.min(CFG.drainDepth,
+      st.level + rain*0.00042*(1+n.seed*0.12) - st.level*0.030 + (Math.random()-0.5)*0.004));
+    const temp = 28 - Math.min(6, rain*0.08) + Math.sin(st.t/40 + n.seed) + (Math.random()-0.5)*0.3;
+    const hum = Math.min(99, 68 + Math.min(25, rain*0.35) + Math.sin(st.t/55 + n.seed)*3 + (Math.random()-0.5)*1.2);
+    buf.push({ t: st.t, rx: st.t*60, level: st.level, rain,
+      batt: 3.95 - n.seed*0.02, rssi: null, snr: null, temp, hum });
+    envs.push({ ts: st.t*60, temp, hum });
+    if(buf.length > 400){ buf.shift(); envs.shift(); }
+  }
+  store[n.id] = buf.slice(); env[n.id] = envs.slice();
+  meta[n.id] = { sim:true, fault:false, batt: buf[buf.length-1].batt, rssi: null, retries: 1 + Math.round(n.seed), rx: now*60, srv:true };
+}
+
 
 const fmtClock = () => new Date().toTimeString().slice(0,8);
 initMap();
@@ -1285,7 +1331,10 @@ window.addEventListener('resize', () => {
   clearTimeout(rz);
   rz = setTimeout(() => { map.invalidateSize(); render(); }, 140);
 });
-window.addEventListener('load', () => { map.invalidateSize(); fitMap(); });   // fonts/layout settle after first paint
+window.addEventListener('load', () => { map.invalidateSize(); fitMap(); });
+if(window.ResizeObserver) new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { map.invalidateSize(); render(); }, 80); })
+  .observe($('chartBox'));
+if(window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe(document.querySelector('.map-body'));   // layout settles after first paint and when the panels resize   // fonts/layout settle after first paint
 </script>
 </body>
 </html>
