@@ -64,34 +64,33 @@ jobs:
 
   firmware:
     runs-on: ubuntu-latest
-    container:
-      image: espressif/idf:v4.3.6
     strategy:
       fail-fast: false
       matrix:
         project: ["."] # "." = the slave (root CMakeLists), "master" = the master
     steps:
+      # Not `container:` - the IDF v4.3.6 image has glibc 2.27, too old for the
+      # node that runs JS actions (checkout, cache). The job runs on the host
+      # and only the build runs inside the image.
       - uses: actions/checkout@v4
-      # Container steps run as root; the checkout is owned by the runner user,
-      # so let idf.py's git version lookup read the repo.
-      - run: git config --global --add safe.directory "${{ github.workspace }}"
       # master/main/node_config.h is gitignored (site config: WiFi, tokens);
       # CI proves the build against the committed placeholder instead.
       - name: Use the placeholder node config
         if: matrix.project == 'master'
-        working-directory: master
-        run: cp main/node_config.h.example main/node_config.h
-      - name: Build
-        working-directory: ${{ matrix.project }}
-        run: |
-          . "${IDF_PATH}/export.sh"
-          idf.py set-target esp32
-          idf.py build
+        run: cp master/main/node_config.h.example master/main/node_config.h
       - uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
           key: idf-ccache-${{ matrix.project }}-${{ github.run_id }}
           restore-keys: idf-ccache-${{ matrix.project }}-
+      - name: Build
+        run: |
+          mkdir -p ~/.cache/ccache
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/ccache:/root/.cache/ccache"             -w "/w/${{ matrix.project }}" espressif/idf:v4.3.6 bash -c '
+              git config --global --add safe.directory /w
+              . "$IDF_PATH/export.sh"
+              idf.py set-target esp32
+              idf.py build'
 
   # The pure C pieces (wire format, level maths, BCD) compile under host gcc -
   # no ESP-IDF, seconds to run. common/ headers are the firmware's own.
