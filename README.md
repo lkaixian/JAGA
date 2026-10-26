@@ -1,6 +1,6 @@
 # JAGA - Water Level Monitoring Network
 
-[![CI](https://github.com/lkaixian/JAGA/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci.yml)
+[![Backend](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml) [![Flutter](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml) [![Firmware build](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml) [![Firmware host tests](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml)
 
 JAGA is a flood-monitoring system. Battery-powered sensor nodes measure temperature, humidity and
 water level (ultrasonic distance) and report over nRF24 radio to an always-on master node. The master
