@@ -21,22 +21,10 @@
 #include "api.h"
 #include "node_config.h"
 
-static const char *TAG = "MASTER_NODE";
+#include "../../common/telemetry.h" // the wire format, shared with the slave project
+#include "../../common/level.h"     // pure level maths, also unit-tested under host gcc
 
-// Struct layout matches exactly across over-the-air binary packets - must
-// stay identical to the slave nodes' telemetry_packet_t or received packets
-// decode as garbage.
-typedef struct __attribute__((packed)) {
-    uint8_t node_id;
-    float temperature;
-    float humidity;
-    uint32_t distance_mm;
-    uint32_t distance_stddev_mm;
-    int32_t water_level_mm;
-    uint32_t timestamp_s;
-    uint16_t batt_mv;
-    uint8_t link_retries;
-} telemetry_packet_t;
+static const char *TAG = "MASTER_NODE";
 
 #define SONAR_SAMPLE_COUNT 10
 // Sensor Pin Definitions (same physical layout as the slave nodes)
@@ -243,7 +231,7 @@ void app_main(void) {
         telemetry_packet_t packet = {0};
         packet.node_id = NODE_ID;
         packet.batt_mv = battery_mv();
-        packet.link_retries = 255; // the master has no radio hop to itself; its link is the SIM (rssi_dbm)
+        packet.link_retries = TELEMETRY_NO_LINK_HISTORY; // the master has no radio hop to itself; its link is the SIM (rssi_dbm)
         if (sample_lock) esp_pm_lock_acquire(sample_lock);
 
         // DHT22 requires a minimum of 2 seconds between reads
@@ -258,8 +246,8 @@ void app_main(void) {
         }
         if (dht_err != ESP_OK) {
             ESP_LOGW(TAG, "DHT22 read failed.");
-            packet.temperature = -999.0f;
-            packet.humidity = -999.0f;
+            packet.temperature = TELEMETRY_READ_FAILED;
+            packet.humidity = TELEMETRY_READ_FAILED;
         }
 
         uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
@@ -277,31 +265,10 @@ void app_main(void) {
 
         if (valid_samples == 0) {
             ESP_LOGW(TAG, "Sonar read failed (0/%d samples valid, last error: %s).", SONAR_SAMPLE_COUNT, esp_err_to_name(sonar_err));
-            packet.distance_mm = 0;
-            packet.distance_stddev_mm = 0;
-            packet.water_level_mm = INT32_MIN;
-        } else {
-            uint32_t sum = 0;
-            for (int i = 0; i < valid_samples; i++) sum += sonar_samples[i];
-            uint32_t mean = sum / valid_samples;
-
-            float variance = 0;
-            for (int i = 0; i < valid_samples; i++) {
-                float diff = (float)sonar_samples[i] - (float)mean;
-                variance += diff * diff;
-            }
-            variance /= valid_samples;
-
-            packet.distance_mm = mean;
-            packet.distance_stddev_mm = (uint32_t)sqrtf(variance);
-
-            float vertical_mm = mean * cosf(SONAR_MOUNT_ANGLE_DEG * (float)M_PI / 180.0f);
-            packet.water_level_mm = (int32_t)(SONAR_MOUNT_HEIGHT_MM - vertical_mm);
-
-            if (valid_samples < SONAR_SAMPLE_COUNT) {
-                ESP_LOGW(TAG, "Sonar: only %d/%d samples valid.", valid_samples, SONAR_SAMPLE_COUNT);
-            }
+        } else if (valid_samples < SONAR_SAMPLE_COUNT) {
+            ESP_LOGW(TAG, "Sonar: only %d/%d samples valid.", valid_samples, SONAR_SAMPLE_COUNT);
         }
+        tele_fill_sonar(&packet, sonar_samples, valid_samples, SONAR_MOUNT_HEIGHT_MM, SONAR_MOUNT_ANGLE_DEG);
 
         if (sample_lock) esp_pm_lock_release(sample_lock);
         packet.timestamp_s = current_timestamp_s();

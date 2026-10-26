@@ -92,3 +92,19 @@ jobs:
           path: ~/.cache/ccache
           key: idf-ccache-${{ matrix.project }}-${{ github.run_id }}
           restore-keys: idf-ccache-${{ matrix.project }}-
+
+  # The pure C pieces (wire format, level maths, BCD) compile under host gcc -
+  # no ESP-IDF, seconds to run. common/ headers are the firmware's own.
+  firmware-host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run each test/host/*.c
+        run: |
+          set -e
+          for t in test/host/*.c; do
+            echo "::group::$t"
+            gcc -Wall -Wextra -Werror -std=gnu11 -Icommon "$t" -o /tmp/host_test -lm
+            /tmp/host_test
+            echo "::endgroup::"
+          done

@@ -16,21 +16,10 @@
 #include "battery.h"
 #include "node_config.h"
 
-static const char *TAG = "MAIN_NODE";
+#include "../common/telemetry.h" // the wire format, shared with the master project
+#include "../common/level.h"     // pure level maths, also unit-tested under host gcc
 
-// Struct layout matches exactly across over-the-air binary packets - update
-// the master node's parser to match whenever this changes.
-typedef struct __attribute__((packed)) {
-    uint8_t node_id;             // which physical node this reading came from
-    float temperature;
-    float humidity;
-    uint32_t distance_mm;        // mean of up to SONAR_SAMPLE_COUNT samples
-    uint32_t distance_stddev_mm; // spread across those samples (0 if <2 valid)
-    int32_t water_level_mm;      // INT32_MIN when every sonar sample failed
-    uint32_t timestamp_s;        // seconds since this node's last power-on (the master stamps wall-clock time on receipt)
-    uint16_t batt_mv;            // battery voltage
-    uint8_t link_retries;        // nRF24 retries the previous acknowledged send needed (0-15), 255 = none yet
-} telemetry_packet_t;
+static const char *TAG = "MAIN_NODE";
 
 #define SONAR_SAMPLE_COUNT 10
 
@@ -115,8 +104,8 @@ void app_main(void) {
     }
     if (dht_err != ESP_OK) {
         ESP_LOGW(TAG, "DHT22 read failed.");
-        packet.temperature = -999.0f;
-        packet.humidity = -999.0f;
+        packet.temperature = TELEMETRY_READ_FAILED;
+        packet.humidity = TELEMETRY_READ_FAILED;
     }
 
     uint32_t sonar_samples[SONAR_SAMPLE_COUNT];
@@ -132,34 +121,10 @@ void app_main(void) {
 
     if (valid_samples == 0) {
         ESP_LOGW(TAG, "Sonar read failed (0/%d samples valid).", SONAR_SAMPLE_COUNT);
-        packet.distance_mm = 0;
-        packet.distance_stddev_mm = 0;
-        packet.water_level_mm = INT32_MIN;
-    } else {
-        uint32_t sum = 0;
-        for (int i = 0; i < valid_samples; i++) sum += sonar_samples[i];
-        uint32_t mean = sum / valid_samples;
-
-        float variance = 0;
-        for (int i = 0; i < valid_samples; i++) {
-            float diff = (float)sonar_samples[i] - (float)mean;
-            variance += diff * diff;
-        }
-        variance /= valid_samples;
-
-        packet.distance_mm = mean;
-        packet.distance_stddev_mm = (uint32_t)sqrtf(variance);
-
-        // Sensor is mounted at a fixed height/angle; the beam measures slant
-        // distance, so project it onto vertical before subtracting from the
-        // mount height to get the actual water level.
-        float vertical_mm = mean * cosf(SONAR_MOUNT_ANGLE_DEG * (float)M_PI / 180.0f);
-        packet.water_level_mm = (int32_t)(SONAR_MOUNT_HEIGHT_MM - vertical_mm);
-
-        if (valid_samples < SONAR_SAMPLE_COUNT) {
-            ESP_LOGW(TAG, "Sonar: only %d/%d samples valid.", valid_samples, SONAR_SAMPLE_COUNT);
-        }
+    } else if (valid_samples < SONAR_SAMPLE_COUNT) {
+        ESP_LOGW(TAG, "Sonar: only %d/%d samples valid.", valid_samples, SONAR_SAMPLE_COUNT);
     }
+    tele_fill_sonar(&packet, sonar_samples, valid_samples, SONAR_MOUNT_HEIGHT_MM, SONAR_MOUNT_ANGLE_DEG);
     packet.timestamp_s = timestamp_s;
 
     ESP_LOGI(TAG, "Node %u Data -> Temp: %.1f C | Hum: %.1f %% | Dist: %u+-%u mm | Water: %ld mm | t=%us",

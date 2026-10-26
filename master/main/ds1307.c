@@ -5,12 +5,11 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 
+#include "../../common/bcd.h" // shared with the slave project; round-trip tested in test/host/
+
 #define DS1307_ADDR 0x68
 
 static const char *TAG = "DS1307_DRIVER";
-
-static uint8_t bcd_to_dec(uint8_t bcd) { return ((bcd >> 4) * 10) + (bcd & 0x0F); }
-static uint8_t dec_to_bcd(uint8_t dec) { return (uint8_t)(((dec / 10) << 4) | (dec % 10)); }
 
 // IDF v4.3.6's driver/i2c.h has no i2c_master_write_to_device()/
 // i2c_master_write_read_device() convenience wrappers yet - build the same

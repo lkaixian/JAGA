@@ -50,7 +50,7 @@ Edit `main/node_config.h` in each project before flashing a new node:
   30 cm below the sensor, otherwise readings become unreliable exactly when the water is highest.
 - **SPI:** the nRF24L01+ and, on the master, the microSD card share one SPI bus (separate CS lines).
 - **I2C:** the optional DS1307 RTC and SSD1306 OLED share one I2C bus.
-- **Wire format:** `telemetry_packet_t` in `main.c` must stay byte-identical in the slave and master projects.
+- **Wire format:** `telemetry_packet_t` lives in one shared header, `common/telemetry.h`, included by both the slave and master projects. `test/host/packet_layout.c` pins the byte offsets in CI, so the two sides cannot drift apart.
 
 ### Status LEDs
 
