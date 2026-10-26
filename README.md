@@ -1,6 +1,6 @@
 # JAGA - Water Level Monitoring Network
 
-[![Backend](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml) [![Flutter](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml) [![Firmware build](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml) [![Firmware host tests](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml)
+[![Backend](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-backend.yml) [![Flutter](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-flutter.yml) [![Firmware build](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware.yml) [![Firmware host tests](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ci-firmware-host-tests.yml) [![iOS build](https://github.com/lkaixian/JAGA/actions/workflows/ios.yml/badge.svg?branch=master)](https://github.com/lkaixian/JAGA/actions/workflows/ios.yml)
 
 JAGA is a flood-monitoring system. Battery-powered sensor nodes measure temperature, humidity and
 water level (ultrasonic distance) and report over nRF24 radio to an always-on master node. The master
@@ -158,7 +158,7 @@ The Flutter app has no login because readings are public. It works like a game l
 
 The iOS build has **not been tested**. It needs a Mac and Xcode, so it cannot be built on Windows locally.
 
-1. **Build:** GitHub > Actions > "iOS build (unsigned)" > Run workflow. A GitHub Mac produces `jaga-unsigned.ipa`
+1. **Build:** GitHub > Actions > "iOS build (unsigned)" > Run workflow (it also runs on every push to `master`). A GitHub Mac produces `jaga-unsigned.ipa`
    as a downloadable artifact.
 2. **Install** (signing is required):
    - Free: sign with your Apple ID using Sideloadly or AltStore. It expires after 7 days; maximum 3 apps.

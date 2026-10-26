@@ -1,8 +1,18 @@
-# Builds the iPhone app on a GitHub-hosted Mac. Run it by hand: Actions tab > "iOS build (unsigned)" > Run workflow.
+# Builds the iPhone app on a GitHub-hosted Mac, on every push / PR into master and by hand.
 # The result is an UNSIGNED .ipa (artifact "jaga-ios-unsigned"). It must be signed before it installs on a real
-# iPhone: see "iPhone" in the README. macOS runners use 10x minutes on private repositories, so this never runs on push.
+# iPhone: see "iPhone" in the README. The build compiles; it does not prove the app runs on a device.
 name: iOS build (unsigned)
-on: workflow_dispatch
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ios:
     runs-on: macos-latest
