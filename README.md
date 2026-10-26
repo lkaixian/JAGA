@@ -1,157 +1,183 @@
 # JAGA - Water Level Monitoring Network
 
-ESP32 + nRF24L01+ sensor network: battery-powered slave nodes report temperature,
-humidity, and water level (via ultrasonic distance) to an always-on master node,
-which aggregates and logs everything to a microSD card.
+JAGA is a flood-monitoring system. Battery-powered sensor nodes measure temperature, humidity and
+water level (ultrasonic distance) and report over nRF24 radio to an always-on master node. The master
+logs every reading to a microSD card and pushes it to a server, which feeds a web dashboard and a
+Flutter phone app.
 
-## Structure
+```
+slave nodes --nRF24--> master node --4G (SIM900A)--> site server --HTTPS--> hub --> dashboard / app
+```
 
-Two independent ESP-IDF projects live in this repo:
+## Repository layout
 
-- **`/` (project `jaga`)** - slave sensor node firmware. Samples DHT22 + JSN-SR40T
-  once per cycle, transmits over nRF24, deep sleeps for the rest of the cycle.
-  Flash this onto each battery-powered sensor node.
-- **`/master` (project `jaga_master`)** - master node firmware. Runs the same
-  sensors as a slave, *and* continuously listens on nRF24 for the slaves,
-  logs every reading (its own + received) to `/sdcard/telem.csv`, and can
-  drive an optional DS1307 RTC (for real timestamps) and SSD1306 OLED (status
-  display). Stays awake between cycles (no sleep) since it must keep listening
-  for slave packets and serving the HTTP API; Wi-Fi modem sleep handles power.
+| Path | Purpose |
+|---|---|
+| `/` (project `jaga`) | Slave node firmware (ESP-IDF). Samples DHT22 + JSN-SR40T, transmits, then deep sleeps. |
+| `master/` (project `jaga_master`) | Master firmware (ESP-IDF). Runs the same sensors, listens for slaves, logs to `/sdcard/telem.csv`, pushes readings to the server. Optional DS1307 RTC and SSD1306 OLED. |
+| `server/` | Site server (FastAPI + SQLite): stores readings, serves the API, computes trends. |
+| `hub/` | Hub that aggregates many sites and serves the public site. |
+| `dashboard/` | Web dashboard, server picker and `servers.json` directory. |
+| `site-template/` | Starter kit for adding a new site. |
+| `app/` | Flutter phone app. |
 
-Each is built/flashed independently from its own directory:
+## Firmware
+
+Each firmware project builds from its own directory:
 
 ```sh
-cd master   # or the repo root for the slave firmware
+cd master          # or stay in the repo root for the slave firmware
 idf.py set-target esp32
 idf.py build flash monitor
 ```
 
-## Per-node configuration
+### Per-node configuration
 
-`main/node_config.h` in each project holds values that differ per physical
-unit - **edit these before flashing a new node**:
+Edit `main/node_config.h` in each project before flashing a new node:
 
 | Setting | Meaning |
 |---|---|
-| `NODE_ID` | Unique per physical node (1-8; the master stores up to 8 nodes, currently slaves 1 and 2, master is 3) |
-| `SONAR_MOUNT_HEIGHT_MM` / `SONAR_MOUNT_ANGLE_DEG` | This node's sensor mount geometry, used to convert raw distance into water level |
-| `SONAR_MAX_RANGE_MM` | Sanity ceiling for sonar readings (defaults to the sensor's own spec range) |
-| `MODEM_APN` / `INGEST_URL` / `INGEST_TOKEN` (master only) | Carrier APN for the SIM900A, and where the master pushes readings (see `docs/4G_SETUP.md`) |
-| `OLED_ENABLED` (master only) | Set to `0` for real deployment - skips the I2C probe and all display writes to save power |
+| `NODE_ID` | Unique per node, 1-8. Currently slaves are 1 and 2, the master is 3. A new slave is a copy of the root project with a new ID. |
+| `SONAR_MOUNT_HEIGHT_MM`, `SONAR_MOUNT_ANGLE_DEG` | Sensor mounting geometry, used to convert distance into water level. |
+| `SONAR_MAX_RANGE_MM` | Ceiling for valid sonar readings (defaults to the sensor's spec range). |
+| `MODEM_APN`, `INGEST_URL`, `INGEST_TOKEN` | Master only. Carrier APN and where the master pushes readings (see `docs/4G_SETUP.md`). |
+| `OLED_ENABLED` | Master only. Set to `0` for real deployments to save power. |
 
-A second slave node is just a copy of the root project with `NODE_ID` set to `2`.
+### Hardware notes
 
-## Hardware notes
+- **JSN-SR40T** runs in trigger/echo mode. Its ECHO pin is 5 V logic, so use a voltage divider down to 3.3 V.
+- **Blind zone:** the JSN-SR40T cannot read closer than about 25 cm. Mount it so the danger level is at least
+  30 cm below the sensor, otherwise readings become unreliable exactly when the water is highest.
+- **SPI:** the nRF24L01+ and, on the master, the microSD card share one SPI bus (separate CS lines).
+- **I2C:** the optional DS1307 RTC and SSD1306 OLED share one I2C bus.
+- **Wire format:** `telemetry_packet_t` in `main.c` must stay byte-identical in the slave and master projects.
 
-- **JSN-SR40T** runs in trigger/echo mode (not UART auto-stream). Its ECHO
-  output is 5V logic and needs a voltage divider down to 3.3V before the
-  ESP32's echo GPIO.
-- **JSN-SR40T blind zone:** it cannot read closer than about 25 cm. Mount it so the danger level
-  is at least 30 cm below the sensor, or the reading turns to garbage exactly when the water is highest.
-- **nRF24L01+** shares one SPI bus; on the master, the microSD card shares
-  that same bus (separate CS line).
-- **DS1307** (optional) and the **SSD1306 OLED** (master only, optional)
-  share one I2C bus.
-- The `telemetry_packet_t` struct layout in `main.c` must stay byte-identical
-  between the slave and master projects - it's the over-the-air wire format.
+### Status LEDs
 
-## Status LEDs
-
-Blue pulses per sonar sampling attempt, green pulses on each successful
-sample and lights solid on a fully successful cycle, red pulses for 5s on
-any read/log/TX error that cycle.
-
-## HTTP API (master, removed)
-
-The master no longer has Wi-Fi: it pushes readings through a SIM900A modem to `/api/ingest` on the server (`docs/4G_SETUP.md`). The section below describes the old Wi-Fi API and no longer applies. The master used to join Wi-Fi and serve JSON on port 80 at `http://jaga-master.local`
-(or the IP it logs as "Got IP" on the serial console; Android often can't
-resolve `.local`). CORS is open. The API comes up whenever Wi-Fi does, without a reboot.
-
-| Endpoint | Returns |
+| LED | Meaning |
 |---|---|
-| `GET /api/status` | `{now_s, uptime_s, rtc_ok, sd_ok, radio_ok}` - `now_s` is the master's clock, use it to age readings |
-| `GET /api/nodes` | `[{node_id, name, lat, lng}]` - coordinates live only in `NODE_META` in `master/main/api.c` |
-| `GET /api/latest` | each node's newest reading |
-| `GET /api/history?node=1-8&limit=N` | that node's last N readings, newest first (max 90, RAM only) |
+| Blue | Pulses on each sonar sampling attempt. |
+| Green | Pulses on each successful sample; solid after a fully successful cycle. |
+| Red | Pulses for 5 s after any read, log or transmit error. |
 
-Sentinels: `temperature_c`/`humidity_pct == -999` = DHT22 failed;
-`water_level_mm == -2147483648` = sonar failed. Without an RTC, timestamps are
-seconds since boot; with one they are local wall time stored as UTC epoch.
+## Server and API
 
-Clients: `dashboard/index.html` (open from disk, set the API URL in Settings;
-must be `file://` or plain `http://`) and the Flutter app in `app/`. Alerts in
-the app only fire while it is running; background push would need FCM and an
-internet-facing server.
-
-## Dashboard server (nginx + Python + SQLite)
+Start the local stack and open <http://localhost:8088>:
 
 ```sh
-MASTER_URL=http://<master-ip> docker compose up --build   # then open http://localhost:8088
+docker compose up --build
 ```
 
-- `nginx` serves `dashboard/` and proxies `/api/` to the `api` container.
-- `server/app.py` (FastAPI) polls the master every 10s into SQLite (`data/jaga.db`), so history
-  outlasts the master's 90-reading RAM buffer and survives its reboots. It serves the same
-  `/api/status|nodes|latest|history` shape, plus `GET /api/trend?warn=&danger=`.
-- `server/trend.py` fits the last 30 min per node: rate (mm/min), rising/steady/falling, and time to the
-  warning/danger levels. Self-check: `python server/trend.py`.
-- `MASTER_URL` needs the master's IP: containers can't resolve `.local`.
-- `dashboard/index.html` is the team's J.A.G.A page (5 nodes `JAGA-01..05` = node ids 1..5), reading this API.
-  Add `?sim` for its simulated storm. Rain, battery and RSSI show a dash: no such sensors yet.
-  Its drain graphic assumes the sensor is 1.45 m above the floor, so set `SONAR_MOUNT_HEIGHT_MM` to 1450 in `node_config.h`.
-- `dashboard/classic.html` is the earlier dashboard (settings dialog, trend table).
+- `nginx` serves `dashboard/` and proxies `/api/` to the server.
+- `server/app.py` stores readings in SQLite (`data/jaga.db`), so history survives master reboots.
+- `server/trend.py` fits the last 30 minutes per node and reports the rate (mm/min), the direction
+  (rising, steady, falling) and the time to the warning and danger levels. Self-check: `python server/trend.py`.
+- `dashboard/index.html` is the main dashboard (nodes `JAGA-01` to `JAGA-05` map to node IDs 1-5). Add `?sim` for a
+  simulated storm. Rain, battery and RSSI show a dash because those sensors do not exist yet. Its drain graphic
+  assumes the sensor is 1.45 m above the floor, so set `SONAR_MOUNT_HEIGHT_MM` to `1450`.
+- `dashboard/classic.html` is the earlier dashboard with a settings dialog and trend table.
 
-### Putting it on the internet: jaga.larmkx.com (Cloudflare Tunnel)
+Endpoints: `/api/status`, `/api/nodes`, `/api/latest`, `/api/history?node=1-8&limit=N`,
+`/api/trend?warn=&danger=`, `/api/site`.
 
-One-time setup, about 15 minutes. No router ports are opened and the master node is never exposed: only nginx is.
+Sentinel values: `temperature_c` or `humidity_pct` of `-999` means the DHT22 failed; `water_level_mm` of
+`-2147483648` means the sonar failed. Without an RTC, timestamps are seconds since boot.
 
-1. **Domain on Cloudflare.** Add `larmkx.com` to a free Cloudflare account and change the nameservers at your registrar to the two Cloudflare gives you. Wait until Cloudflare shows the domain as Active.
-2. **Create the tunnel.** Cloudflare dashboard > Zero Trust > Networks > Tunnels > Create a tunnel > Cloudflared. Name it `jaga`. On the next screen copy the long token (the text after `--token`). Skip the install step: Docker runs it for you.
-3. **Public hostname.** In the tunnel's Public Hostname tab add: subdomain `jaga`, domain `larmkx.com`, service `http://nginx:80` (if the form has a separate type dropdown, pick HTTP and enter `nginx:80`; if it has one box, type the whole `http://nginx:80`). Cloudflare creates the DNS record itself.
-4. **Give the token to Docker.** In `C:\JAGA` create a file named `.env` (it is gitignored, never commit it) containing:
+> The master no longer has Wi-Fi or its own HTTP API. It pushes readings to the server's `/api/ingest`
+> through a SIM900A modem (`docs/4G_SETUP.md`).
+
+## Hub and sites
+
+One **hub** (`hub/`, at jaga.larmkx.com) serves many **sites** (a `server/` plus a master node each, for example
+UTHM Batu Pahat and UTHM Pagoh).
+
+- Sites push to the hub over outbound HTTPS only (heartbeat every 30 s, readings in batches). A site needs no
+  tunnel, public IP or open port.
+- The hub serves each site at `/server/<slug>` (dashboard) and `/server/<slug>/api/...` (same JSON as a site,
+  plus `site_ok` and `site_age_s`).
+- If a site goes down, the hub keeps its data and marks only that site offline. If the hub goes down, sites keep
+  working locally and catch up when it returns.
+- `/servers.json`, the list the app reads, is generated from the registered sites with `online` and `last_seen_s`.
+- Each site has its own secret token. The hub admin manages sites with
+  `docker compose exec hub python admin.py <command>` (`add`, `list`, `approve`, `revoke`, `rotate`, `set`, `remove`).
+  Sites can be added as `--pending` and approved later.
+
+```sh
+docker compose --profile hub up -d     # start the hub (data in hub-data/, set HUB_PUBLIC_URL in .env)
+```
+
+To add a site, see `site-template/README.md`. To publish this PC's own stack as a site, set `HUB_URL`,
+`SITE_SLUG` and `SITE_TOKEN` in `.env`.
+
+Tests: `python hub/test_hub.py`, `python server/test_push.py`, `python server/test_poll.py`.
+
+### Publishing with Cloudflare Tunnel (jaga.larmkx.com)
+
+About 15 minutes of one-time setup. No router ports are opened, and the master node is never exposed.
+
+1. **Add the domain.** Add `larmkx.com` to a free Cloudflare account and switch the registrar's nameservers to
+   the two Cloudflare gives you. Wait until the domain shows as Active.
+2. **Create the tunnel.** Zero Trust > Networks > Tunnels > Create a tunnel > Cloudflared, named `jaga`. Copy the
+   token (the text after `--token`) and skip the install step; Docker runs it.
+3. **Add a public hostname.** Subdomain `jaga`, domain `larmkx.com`, service `http://nginx:80`
+   (or type `HTTP` and `nginx:80` if the form splits them).
+4. **Set the token.** Create `.env` in the repo root (gitignored, never commit it):
    ```
    TUNNEL_TOKEN=<the token>
    MASTER_URL=http://<master IP on your Wi-Fi>
    ```
-5. **Start it.** `docker compose --profile tunnel up -d`
-6. **Check it.** Open `https://jaga.larmkx.com` (homepage), `https://jaga.larmkx.com/dashboard`, and `https://jaga.larmkx.com/servers.json` (the list the app reads).
+5. **Start.** `docker compose --profile tunnel up -d`
+6. **Check.** Open `https://jaga.larmkx.com`, `/dashboard` and `/servers.json`.
 
-What you get: `/` homepage (pick a server, app download), `/dashboard` the server picker with the nearest servers, `/server/<slug>` one site's live dashboard (a bare `/<slug>` redirects there), `/servers.json` the directory for the app, `/server/<slug>/api/...` that site's data.
-The PC running Docker must stay on and on the same network as the master node. Visitors can read; moving a pin is blocked for tunnel traffic. To require a login for reading too, add a Cloudflare Access policy (email one-time PIN) on `jaga.larmkx.com`, but note the phone app cannot pass that login.
-To offer the Android app on the homepage, copy the APK to `downloads/jaga.apk` (the folder is gitignored).
-Server list for the app: add one entry per deployment to `dashboard/servers.json` (`name`, `url`, `lat`, `lng`, optional `logo` path or URL). This server's icon comes from `SITE_LOGO` (default `/uthm.png`).
+Public routes: `/` homepage, `/dashboard` server picker, `/server/<slug>` a site's live dashboard,
+`/servers.json` the directory for the app.
 
-## Hub and sites (many deployments)
+Notes:
+- The PC running Docker must stay on and share a network with the master node.
+- Visitors can read; moving a map pin is blocked for tunnel traffic.
+- To require login for reading, add a Cloudflare Access policy. The phone app cannot pass that login.
+- To offer the Android app on the homepage, copy the APK to `downloads/jaga.apk` (gitignored).
+- To list a deployment in the app, add `name`, `url`, `lat`, `lng` (and optionally `logo`) to
+  `dashboard/servers.json`. This server's icon comes from `SITE_LOGO` (default `/uthm.png`).
 
-One **hub** (`hub/`, at jaga.larmkx.com) serves many **sites** (`server/` + a master node each, e.g. UTHM Batu Pahat, UTHM Pagoh).
+## Phone app
 
-- A site pushes to the hub over outbound HTTPS only (heartbeat every 30 s, readings in batches). The hub never connects in, so a site needs no tunnel, public IP or open port.
-- The hub stores each site under its own slug and serves it at `https://jaga.larmkx.com/server/<slug>` (dashboard) and `.../server/<slug>/api/...` (same JSON as a site server, plus `site_ok` and `site_age_s`).
-- If a site goes down, the hub keeps its stored data and marks only that site offline. Other sites are not affected. If the hub goes down, sites keep working locally and catch up when it returns.
-- `/servers.json` (the list the app reads) is generated by the hub from the registered sites, with `online` and `last_seen_s`.
-- Each site has its own secret token; a site is added by the hub admin with `docker compose exec hub python admin.py add <slug> --name "..." ...` (`list`, `approve`, `revoke`, `rotate`, `set`, `remove` also exist). Sites can be created as `--pending` and approved later.
-- Start the hub: `docker compose --profile hub up -d` (data in `hub-data/`, set `HUB_PUBLIC_URL` in `.env`). Add a site: see `site-template/README.md`.
-- This PC's own stack (`docker compose up -d`) is itself a site; to publish it on the hub, set `HUB_URL`, `SITE_SLUG` and `SITE_TOKEN` in `.env`.
-- Tests: `python hub/test_hub.py`, `python server/test_push.py`, `python server/test_poll.py`.
+The Flutter app has no login because readings are public. It works like a game lobby:
 
-## App: server lobby
+- On first launch it asks for location once, reads the server directory (`directoryUrl` in `app/lib/lobby.dart`)
+  and joins the nearest server within 50 km. If location is denied or nothing is close, it shows the list.
+- The lobby lists each server with name, distance and a live/offline dot. "Join by address" accepts anything
+  not listed (LAN IP, `.local` name or domain).
+- The last 5 joined servers are remembered. Settings > Switch server returns to the lobby without auto-joining.
+- Each server reports its own centre at `GET /api/site` (name from the `SITE_NAME` env var).
+- Alerts fire only while the app is open. Background push would need FCM and an internet-facing server.
 
-Readings are public, so the Flutter app has no login. It works like a game lobby:
+### iPhone
 
-- First launch with nothing saved: asks for location once, reads the directory (`dashboard/servers.json`, served at
-  `<your domain>/servers.json`, URL set as `directoryUrl` in `app/lib/lobby.dart`), and auto-joins the nearest server
-  within 50 km. Denied GPS or nothing close: shows the list instead.
-- Lobby list: name, distance, live/offline dot; or "Join by address" for anything not listed (LAN IP, `.local`, a domain).
-- Joined servers are remembered (last 5); Settings > Switch server returns to the lobby, and it won't auto-join again.
-- To list a new deployment: add `{name, url, lat, lng}` to `servers.json`. Each server also reports its own centre at
-  `GET /api/site` (name from the `SITE_NAME` env var).
+The iOS build has **not been tested**. It needs a Mac and Xcode, so it cannot be built on Windows locally.
 
-## iPhone
+1. **Build:** GitHub > Actions > "iOS build (unsigned)" > Run workflow. A GitHub Mac produces `jaga-unsigned.ipa`
+   as a downloadable artifact.
+2. **Install** (signing is required):
+   - Free: sign with your Apple ID using Sideloadly or AltStore. It expires after 7 days; maximum 3 apps.
+   - Paid ($99/year, Apple Developer Program): TestFlight or ad hoc builds. Needs signing certificates added to
+     the workflow as secrets, which are not set up yet.
+3. **First checks:** location prompt, notification prompt, the map, and joining a server.
 
-The Flutter code is shared with Android, but an iPhone build needs a Mac and Xcode, so it cannot be built or tested on a Windows PC. **The iOS build has not been tested by anyone yet.**
+## Known technical debt
 
-1. Build: GitHub > Actions > "iOS build (unsigned)" > Run workflow. It builds on a GitHub Mac (manual trigger only) and gives you `jaga-unsigned.ipa` as a downloadable artifact.
-2. Install on a real iPhone, which needs signing:
-   - **Free:** sign with your own Apple ID using Sideloadly or AltStore on a PC. The install expires after 7 days and must be redone; up to 3 apps.
-   - **Paid ($99 a year, Apple Developer Program):** TestFlight or ad hoc builds. This needs signing certificates added to the workflow as secrets; not set up.
-3. First things to check on a phone: the location prompt, the notification prompt (alerts show while the app is open), the map, and joining a server.
+Shortcuts taken on purpose, and gaps not yet closed. Each is marked in code with a `ponytail:` comment where one exists.
+
+| Area | Debt | Fix when |
+|---|---|---|
+| Server ingest (`server/app.py`) | Duplicate readings are filtered by a 10-minute window, not a unique key. | Replays older than 10 minutes cause double rows. |
+| Master API (`master/main/api.c`) | The master's own rows get the newest SIM signal, not the signal at sampling time. | Signal history per reading is needed. |
+| RTC (`ds1307.c`) | The clock is set from build time, so it is off by the build-to-flash gap. | Real timestamps matter, so set it from the server or NTP. |
+| Trend (`server/trend.py`) | Fixed 1 mm/min steady dead-band for every site. | Per-site tuning is needed. |
+| Dashboard (`dashboard/site.html`) | Ages use the browser clock against the server clock, so they skew if the two differ. | Use the server's `now_s` for all ages. |
+| App (`app/lib/api.dart`) | Connection refusals are matched by message text because OS error codes differ per platform. | A platform changes the wording. |
+| Node config (`node_config.h`) | Sonar mount height and angle are placeholders, not measured values. | Before any real deployment. |
+| Android release | Still the template application ID and debug signing config (`build.gradle.kts`). | Before publishing to the Play Store. |
+| Hardware | The master has never been connected to real sensors, and PPP push over the SIM900A is untested. | First field test. |
+| iOS | Build workflow exists but has never been run or tested on a device. | Before offering an iPhone app. |
+| Alerts | The app alerts only while open; no background push. | Add FCM and an internet-facing server. |
